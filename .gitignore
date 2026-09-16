@@ -1,0 +1,45 @@
+# Build / IDE output
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+dist/
+artifacts/
+*.user
+
+# Runtime data and credentials
+data/
+operationaldocs/
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Generated packages and logs
+*.tar.gz
+*.tgz
+*.zip
+*.log
+*.tmp
+
+# Site-specific deployment files
+# Commit only sanitized *.example templates.
+deploy/add-octopus-rewrite.sh
+deploy/nginx-octopus-network.conf
+deploy/octopus.nginx
+
+# Private operational evidence
+docs/private-*
+docs/stage2-reconciliation.json
+docs/stage2-screenshots/
+
+# Vendored developer source maps
+*.map

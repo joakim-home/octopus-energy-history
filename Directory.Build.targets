@@ -1,0 +1,4 @@
+<Project>
+  <!-- The app is local-first; suppress Avalonia's optional build-usage telemetry task. -->
+  <Target Name="AvaloniaStats" />
+</Project>

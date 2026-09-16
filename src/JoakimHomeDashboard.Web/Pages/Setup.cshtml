@@ -1,0 +1,21 @@
+@page
+@model SetupModel
+@{
+    ViewData["Title"] = "Octopus Setup";
+    ViewData["Page"] = "Setup";
+}
+<section class="page-head"><div><p class="eyebrow">CONFIGURATION</p><h1>Octopus Setup</h1><p>One protected credential, then automatic account and meter discovery.</p></div></section>
+@if (TempData["Message"] is string message) { <div class="notice">@message</div> }
+<form method="post" class="setup-grid">
+    <section class="card stack"><h2>1 · Connect</h2><label>API key<input asp-for="Input.ApiKey" type="password" autocomplete="new-password" placeholder="Saved value is never shown"/></label><span class="secret-status">@(Model.Snapshot.HasOctopusApiKey ? "✓ API key saved with host encryption" : "API key not configured on this host")</span><label>Account number override <small>optional</small><input asp-for="Input.AccountCode" placeholder="Leave blank for automatic discovery"/></label><div class="actions"><button asp-page-handler="Save">Save</button><button class="primary" asp-page-handler="Discover">Discover account</button><button asp-page-handler="Test">Test</button><button asp-page-handler="Sync">Sync now</button></div><p>Discovery finds active properties, import/export MPANs, gas MPRNs, meter serials and tariffs.</p></section>
+    <section class="card"><h2>Setup checklist</h2><ul class="checklist"><li class="@(Model.Meters.Any(x=>x.FuelType=="electricity"&&!x.IsExport)?"ok":"muted")">Electricity import</li><li class="@(Model.Meters.Any(x=>x.FuelType=="electricity"&&x.IsExport)?"ok":"muted")">Electricity export</li><li class="@(Model.Meters.Any(x=>x.FuelType=="gas")?"ok":"muted")">Gas</li></ul><p>@Model.Meters.Select(x=>x.AccountNumber).Distinct().Count() account · @Model.Meters.Select(x=>x.PropertyId).Distinct().Count() properties · @Model.Meters.Count meter configurations</p></section>
+</form>
+
+<section class="card"><h2>2 · Discovered configuration</h2><div class="table-wrap"><table><thead><tr><th>Service</th><th>Meter point</th><th>Serial</th><th>Tariff</th><th>Product</th></tr></thead><tbody>@foreach (var meter in Model.Meters) { <tr><td>@(meter.FuelType=="gas"?"Gas":meter.IsExport?"Electricity export":"Electricity import")</td><td>@meter.MeterPoint</td><td>@meter.MeterSerial</td><td>@meter.TariffCode</td><td>@meter.ProductCode</td></tr> }</tbody></table></div></section>
+
+<details class="card advanced"><summary>Advanced overrides</summary><form method="post" class="form-grid">
+    <label>Import MPAN<input asp-for="Input.Mpan"/></label><label>Import serial<input asp-for="Input.MeterSerial"/></label><label>Import product<input asp-for="Input.ProductCode"/></label><label>Import tariff<input asp-for="Input.TariffCode"/></label>
+    <label>Export MPAN<input asp-for="Input.ExportMpan"/></label><label>Export serial<input asp-for="Input.ExportMeterSerial"/></label><label>Export product<input asp-for="Input.ExportProductCode"/></label><label>Export tariff<input asp-for="Input.ExportTariffCode"/></label>
+    <label>Gas MPRN<input asp-for="Input.GasMprn"/></label><label>Gas serial<input asp-for="Input.GasMeterSerial"/></label><label>Gas product<input asp-for="Input.GasProductCode"/></label><label>Gas tariff<input asp-for="Input.GasTariffCode"/></label>
+    <label>Solar array size (kWp)<input asp-for="Input.SolarCapacityKwp" type="number" min="0.1" step="0.01"/></label><label class="checkbox"><input asp-for="Input.GasReadingsInCubicMetres"/> Gas API readings are cubic metres</label><div><button asp-page-handler="SaveOverrides" class="primary">Save overrides</button></div>
+</form></details>

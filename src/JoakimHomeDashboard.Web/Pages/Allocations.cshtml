@@ -1,0 +1,24 @@
+@page
+@model AllocationsModel
+@{ ViewData["Title"] = "Supplier allocation audit"; }
+<section class="page-head"><div><p class="eyebrow">INTELLIGENT OCTOPUS GO</p><h1>Supplier allocation audit</h1><p>Meter readings stay unchanged. Home and EV allocations are reconciled independently.</p></div><a href="/">Back to overview</a></section>
+<section class="card"><h2>Daily reconciliation</h2><p>Estimated energy costs include VAT verified against supplier tariff rates. Standing charges are excluded from these energy costs and weighted averages.</p>
+@if(Model.Health is { } health)
+{
+<p>Sync state: @health.RetryState · Last allocation attempt: @health.LastAttemptAt?.ToString("u") · Last completed: @health.LastCompletedAt?.ToString("u") · Last fully reconciled: @health.LastFullyReconciledAt?.ToString("u").</p>
+<p>@health.ReconciledIntervals / @health.ExpectedIntervals intervals · @health.UnclassifiedKwh.ToString("N3") kWh unclassified · Oldest unresolved: @(health.MissingTimestamps.FirstOrDefault() ?? "None"). Unresolved intervals are retried on every sync.</p>
+}
+<div class="table-wrap"><table><thead><tr><th>Day</th><th>Meter kWh</th><th>Allocated kWh</th><th>Difference</th><th>Intervals</th><th>Energy incl VAT</th><th>Status</th></tr></thead><tbody>
+@foreach(var day in Model.Days)
+{
+<tr><td>@day.Period</td><td>@day.MeterKwh.ToString("N3")</td><td>@day.AllocatedKwh.ToString("N3")</td><td>@((day.AllocatedKwh-day.MeterKwh).ToString("0.000000"))</td><td>@day.Reconciled / @day.Intervals</td><td>@(day.Complete ? $"£{day.KnownGrossGbp:N4}" : "Unavailable / partial")</td><td>@(day.Complete ? "Reconciled" : "Needs review — no legacy fallback")</td></tr>
+}
+</tbody></table></div></section>
+<section class="card"><h2>Issued bill charges</h2><p>Actual issued, unreversed charges. These billing-period amounts include charges such as standing charges and are separate from supplier-calculated interval estimates.</p>
+<div class="table-wrap"><table><thead><tr><th>Issued</th><th>Service</th><th>Consumption dates</th><th>Quantity</th><th>Net</th><th>VAT</th><th>Gross</th></tr></thead><tbody>
+@foreach(var charge in Model.Charges.Take(12))
+{
+<tr><td>@charge.Issued</td><td>@charge.Title</td><td>@charge.From – @charge.To</td><td>@charge.Quantity</td><td>£@charge.Net.ToString("N2")</td><td>£@charge.Tax.ToString("N2")</td><td>£@charge.Gross.ToString("N2")</td></tr>
+}
+</tbody></table></div></section>
+<section class="card"><h2>Charging-session evidence</h2><p>@Model.SmartSessions SMART sessions · @Model.BoostSessions BOOST sessions in the retrieved evidence. Session markers support the audit; they do not determine the allocation of total meter consumption or prove final billed half-hour costs.</p></section>

@@ -1,0 +1,47 @@
+# Reference queries verified 2026-09-12. Not wired into sync or a repricing job.
+# Authenticate via obtainKrakenToken using the configured API key; never persist/log tokens.
+# Supply actual observed periods. Do not supply hypothetical consumption.
+query SupplierAllocatedCost($account: String!, $periods: [DateTimeRangeInput]!, $supplyPoint: ID) {
+  gbrCostOfUsage(accountNumber: $account, periods: $periods, supplyPointId: $supplyPoint) {
+    periods {
+      period { start end }
+      totalConsumption
+      consumptionUnit
+      totalCost
+      currency
+      intervals {
+        period { start end }
+        consumption
+        consumptionUnit
+        rateApplied
+        cost
+        currency
+        bandSubcategory
+      }
+    }
+  }
+}
+
+query ChargingEvidence($account: String!, $from: DateTime, $to: DateTime) {
+  devices(accountNumber: $account) {
+    id
+    deviceType
+    provider
+    ... on ElectricDevice {
+      chargingSessions(after: $from, before: $to, first: 30) {
+        edges {
+          node {
+            start
+            end
+            energyAdded { value unit }
+            cost { amount currency }
+            ... on SmartFlexChargingSession {
+              type
+              dispatches { start end type energyAddedKwh }
+            }
+          }
+        }
+      }
+    }
+  }
+}

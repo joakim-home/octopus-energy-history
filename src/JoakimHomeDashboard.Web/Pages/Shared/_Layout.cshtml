@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>@ViewData["Title"] · Octopus</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" asp-page="/Index"><span class="brand-mark">⚡</span><span><strong>OCTOPUS</strong><small>LOCAL ENERGY HISTORY</small></span></a>
+        <nav>
+            <a class="@(ViewData["Page"] as string == "Overview" ? "active" : "")" asp-page="/Index">Overview</a>
+            <a class="@(ViewData["Page"] as string == "Year" ? "active" : "")" asp-page="/YearAnalysis">Year Analysis</a>
+            <a class="@(ViewData["Page"] as string == "Setup" ? "active" : "")" asp-page="/Setup">Octopus Setup</a>
+        </nav>
+        <span class="service-state"><i></i> Local service</span>
+    </header>
+    <main class="shell">@RenderBody()</main>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

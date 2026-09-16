@@ -69,3 +69,5 @@ Read [the data model](docs/data-model.md) and [troubleshooting](docs/troubleshoo
 This project was developed with AI assistance. Contributors and maintainers remain responsible for reviewing changes and test evidence. See [contributing](CONTRIBUTING.md).
 
 Original project code is licensed under [MIT](LICENSE). Dependencies retain their own [licenses](THIRD_PARTY_NOTICES.md).
+
+
