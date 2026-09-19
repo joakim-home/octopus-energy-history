@@ -1,0 +1,22 @@
+@page
+@model JoakimHomeDashboard.Web.Pages.Account.LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+<section class="auth-shell">
+    <div class="card auth-card stack">
+        <div>
+            <p class="eyebrow">LOCAL ACCESS</p>
+            <h1>Sign in</h1>
+            <p>Use the local administrator account for this dashboard.</p>
+        </div>
+        <div asp-validation-summary="All" class="validation"></div>
+        <form method="post" class="stack">
+            <input asp-for="ReturnUrl" type="hidden" />
+            <label>Username<input asp-for="Input.Username" autocomplete="username" autofocus /></label>
+            <label>Password<input asp-for="Input.Password" type="password" autocomplete="current-password" /></label>
+            <label class="checkbox-row"><input asp-for="Input.RememberMe" /> Keep me signed in</label>
+            <button type="submit" class="primary">Sign in</button>
+        </form>
+    </div>
+</section>

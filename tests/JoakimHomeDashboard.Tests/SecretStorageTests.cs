@@ -12,7 +12,7 @@ public sealed class SecretStorageTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-secret-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             const string secret = "fixture-secret-that-must-not-be-plaintext"; await repository.SetSettingAsync("test.secret", secret, true);
             await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()); await connection.OpenAsync();
             await using var command = connection.CreateCommand(); command.CommandText = "SELECT value,is_secret FROM settings WHERE key='test.secret'";

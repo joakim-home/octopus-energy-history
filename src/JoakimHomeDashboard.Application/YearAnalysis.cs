@@ -20,47 +20,6 @@ public static class YearAnalysisBuilder
         return result;
     }
 
-    public static IReadOnlyList<MonthlyCostColumnPoint> BuildCostColumnPoints(IEnumerable<MonthlyEnergyInsight> monthly, IEnumerable<int>? selectedYears = null)
-    {
-        var years = selectedYears?.Distinct().ToHashSet();
-        return monthly
-            .Where(point => years is null || years.Contains(point.Month.Year))
-            .OrderBy(point => point.Month)
-            .Select(point => new MonthlyCostColumnPoint(
-                point.Month,
-                ExactBandCost(point.PeakImportKwh, point.PeakImportCostGbp, point.PeakCostExact),
-                ExactBandCost(point.OffPeakImportKwh, point.OffPeakImportCostGbp, point.OffPeakCostExact),
-                point.ExportKwh == 0 ? 0 : point.ExportIncomeExact ? -Math.Abs(point.ExportIncomeGbp) : null,
-                point.NetElectricityCostExact ? point.NetElectricityCostGbp : null))
-            .ToArray();
-    }
-
-    public static IReadOnlyList<CostColumnSegment> BuildCostColumnSegments(IEnumerable<MonthlyCostColumnPoint> points, CostColumnMode mode)
-    {
-        var result = new List<CostColumnSegment>();
-        foreach (var point in points.OrderBy(value => value.Month))
-        {
-            if (mode == CostColumnMode.NetCost)
-            {
-                if (point.NetElectricityCostGbp is { } net)
-                    result.Add(new(point.Month, net > 0 ? "Net electricity cost" : net < 0 ? "Profit / export surplus" : "Break-even", net, 0));
-                continue;
-            }
-
-            var positiveBase = 0m;
-            if (point.PeakImportCostGbp is { } peak)
-            {
-                result.Add(new(point.Month, "Peak import cost", peak, positiveBase));
-                positiveBase += peak;
-            }
-            if (point.OffPeakImportCostGbp is { } offPeak)
-                result.Add(new(point.Month, "Off-peak import cost", offPeak, positiveBase));
-            if (point.ExportIncomeChartGbp is { } exportIncome)
-                result.Add(new(point.Month, "Export income", -Math.Abs(exportIncome), 0));
-        }
-        return result;
-    }
-
     public static IReadOnlyList<YearAnalysisTableRow> BuildTable(IEnumerable<MonthlyEnergyInsight> monthly, YearAnalysisMetric metric, IEnumerable<int> selectedYears)
     {
         var series = BuildSeries(monthly, metric, selectedYears);
@@ -115,7 +74,6 @@ public static class YearAnalysisBuilder
         _ => null
     };
 
-    private static decimal? ExactBandCost(decimal usage, decimal cost, bool exact) => usage == 0 ? 0 : exact ? cost : null;
 
     private static AnnualAnalysisValue Energy(IReadOnlyCollection<MonthlyEnergyInsight> rows, Func<MonthlyEnergyInsight, decimal> value)
     {

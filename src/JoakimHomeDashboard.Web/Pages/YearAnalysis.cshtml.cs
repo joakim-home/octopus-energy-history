@@ -14,10 +14,7 @@ public sealed class YearAnalysisModel(WebDashboardService dataService, IHomeEven
     public IReadOnlyList<YearAnalysisTableRow> UsageRows { get; private set; } = [];
     public IReadOnlyList<YearAnalysisTableRow> GasRows { get; private set; } = [];
     public IReadOnlyList<YearAnalysisTableRow> CombinedRows { get; private set; } = [];
-    public string CostChart { get; private set; } = "{}";
-    public string UsageChart { get; private set; } = "{}";
-    public string GasChart { get; private set; } = "{}";
-    public string CombinedChart { get; private set; } = "{}";
+    public string YearExplorerJson { get; private set; } = "{}";
 
     public async Task OnGetAsync()
     {
@@ -28,10 +25,17 @@ public sealed class YearAnalysisModel(WebDashboardService dataService, IHomeEven
         UsageRows = YearAnalysisBuilder.BuildTable(Data.Monthly, YearAnalysisMetric.NetGridUsage, years);
         GasRows = YearAnalysisBuilder.BuildTable(Data.Monthly, YearAnalysisMetric.GasCost, years);
         CombinedRows = YearAnalysisBuilder.BuildTable(Data.Monthly, YearAnalysisMetric.CombinedUtilityCost, years);
-        CostChart = Chart(YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.NetElectricityCost, years));
-        UsageChart = Chart(YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.NetGridUsage, years));
-        GasChart = Chart(YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.GasCost, years));
-        CombinedChart = Chart(YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.CombinedUtilityCost, years));
+        YearExplorerJson = JsonSerializer.Serialize(new
+        {
+            years,
+            metrics = new
+            {
+                cost = MetricPayload("Net electricity cost", "£", YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.NetElectricityCost, years), CostRows),
+                usage = MetricPayload("Net grid usage", "kWh", YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.NetGridUsage, years), UsageRows),
+                gas = MetricPayload("Gas cost", "£", YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.GasCost, years), GasRows),
+                combined = MetricPayload("Combined utility cost", "£", YearAnalysisBuilder.BuildSeries(Data.Monthly, YearAnalysisMetric.CombinedUtilityCost, years), CombinedRows)
+            }
+        });
     }
 
     public async Task<IActionResult> OnPostAddEventAsync(DateTime eventDate, string eventLabel, string eventCategory)
@@ -47,6 +51,19 @@ public sealed class YearAnalysisModel(WebDashboardService dataService, IHomeEven
         return RedirectToPage();
     }
 
-    private static string Chart(IReadOnlyList<YearAnalysisSeries> series)
-        => JsonSerializer.Serialize(new { labels = Enumerable.Range(1, 12).Select(x => new DateOnly(2000, x, 1).ToString("MMM")), series = series.Select((x, i) => new { name = x.Year.ToString(), values = x.Months, color = new[] { "#57b8ff", "#9d7bff", "#37d7a0", "#ffb454" }[i % 4] }) });
+    private static object MetricPayload(string title, string unit, IReadOnlyList<YearAnalysisSeries> series, IReadOnlyList<YearAnalysisTableRow> rows)
+        => new
+        {
+            title,
+            unit,
+            series = series.Select(x => new { name = x.Year.ToString(), values = x.Months }),
+            rows = rows.Select(row => new
+            {
+                month = new DateOnly(2000, row.Month, 1).ToString("MMM"),
+                values = row.Values.Select(x => new { year = x.Year, value = x.Value }),
+                difference = row.Difference,
+                percentageDifference = row.PercentageDifference
+            })
+        };
+
 }

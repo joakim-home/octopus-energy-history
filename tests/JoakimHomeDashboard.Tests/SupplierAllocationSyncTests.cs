@@ -19,7 +19,7 @@ public sealed class SupplierAllocationSyncTests
         try
         {
             var start = DateTimeOffset.Parse(timestamp);
-            var repository = new SqliteDashboardRepository(path);
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector());
             await repository.InitializeAsync();
             await repository.SetSettingAsync("octopus.apiKey", "fixture");
             var tariff = new OctopusTariffPeriod("A", 1, "electricity", false, "IMP", "FOUR", "FOUR", start, start.AddMinutes(30));
@@ -67,7 +67,7 @@ public sealed class SupplierAllocationSyncTests
         try
         {
             var start = DateTimeOffset.Parse("2026-09-01T00:00:00+01:00");
-            var repository = new SqliteDashboardRepository(path);
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector());
             await repository.InitializeAsync();
             await repository.SetSettingAsync("octopus.apiKey", "fixture");
             var tariff = new OctopusTariffPeriod("A", 1, "electricity", false, "IMP", "FOUR", "FOUR", start, start.AddMinutes(30));
@@ -87,7 +87,7 @@ public sealed class SupplierAllocationSyncTests
             Assert.Null(Assert.Single(await repository.GetOctopusIntervalsAsync(DateOnly.FromDateTime(start.Date))).CostGbp);
 
             // Recreate repository, store and connector to prove retry state survives a process lifetime.
-            var restartedRepository = new SqliteDashboardRepository(path);
+            var restartedRepository = new SqliteDashboardRepository(path, new TestSecretProtector());
             var restartedStore = new SupplierAllocationStore(path);
             Assert.Equal(pending.LastAttemptAt, (await restartedStore.GetHealthAsync()).LastAttemptAt);
             handler.ThrowOnAllocation = false;

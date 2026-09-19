@@ -293,7 +293,7 @@ public sealed class SupplierAllocationTests
         private readonly string path=Path.Combine(Path.GetTempPath(),$"supplier-allocation-{Guid.NewGuid():N}.db");
         public SqliteDashboardRepository Repository {get;}
         public SupplierAllocationStore Store {get;}
-        private Fixture(){Repository=new(path);Store=new(path);}
+        private Fixture(){Repository=new(path, new TestSecretProtector());Store=new(path);}
         public static async Task<Fixture> Create(){var f=new Fixture();await f.Repository.InitializeAsync();await f.Store.RegisterAsync(Tariff,"{}");return f;}
         public async Task<string> Raw(){using var c=new SqliteConnection($"Data Source={path};Pooling=False");await c.OpenAsync();using var cmd=c.CreateCommand();cmd.CommandText="SELECT * FROM octopus_raw_readings ORDER BY id";using var r=await cmd.ExecuteReaderAsync();var rows=new List<object[]>();while(await r.ReadAsync()){var row=new object[r.FieldCount];r.GetValues(row);rows.Add(row);}return JsonSerializer.Serialize(rows);}
         public async Task<long> Count(string table){using var c=new SqliteConnection($"Data Source={path};Pooling=False");await c.OpenAsync();using var cmd=c.CreateCommand();cmd.CommandText=$"SELECT COUNT(*) FROM {table}";return (long)(await cmd.ExecuteScalarAsync())!;}

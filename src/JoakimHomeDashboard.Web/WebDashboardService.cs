@@ -4,17 +4,19 @@ using JoakimHomeDashboard.Domain;
 
 namespace JoakimHomeDashboard.Web;
 
-public sealed class WebDashboardService(DashboardService dashboard, IHomeEventStore events)
+public sealed class WebDashboardService(IDashboardRepository repository, IHomeEventStore events, ISyncCoordinator sync)
 {
     public async Task<WebDashboardData> LoadAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await dashboard.LoadEnergyAsync(cancellationToken);
+        var snapshot = await repository.GetEnergyDashboardAsync(cancellationToken);
         var monthly = EnergyInsightBuilder.BuildMonthly(snapshot.Monthly);
-        var solar = await dashboard.LoadSolarConfigurationAsync(cancellationToken);
+        var solar = await repository.GetSolarAnalysisConfigurationAsync(cancellationToken);
         var homeEvents = await events.GetHomeEventsAsync(cancellationToken);
         var solarAnalysis = EnergyComparisonEngine.AnalyzeSolar(monthly, solar, homeEvents, false);
+        var solarSavings = EnergyComparisonEngine.EstimateSolarSavings(snapshot.Daily, solar, DateOnly.FromDateTime(DateTime.Today));
+        var statuses = await sync.GetStatusesAsync(cancellationToken);
         var years = YearAnalysisBuilder.AvailableYears(monthly);
-        return new(snapshot, monthly, solar, solarAnalysis, homeEvents, years);
+        return new(snapshot, monthly, solar, solarAnalysis, solarSavings, homeEvents, statuses, years);
     }
 
     public static string Money(decimal value, bool exact = true) => exact
@@ -35,7 +37,9 @@ public sealed record WebDashboardData(
     IReadOnlyList<MonthlyEnergyInsight> Monthly,
     SolarAnalysisConfiguration Solar,
     SolarBaselineAnalysis SolarAnalysis,
+    SolarSavingsEstimate SolarSavings,
     IReadOnlyList<HomeEvent> HomeEvents,
+    IReadOnlyList<ProviderSyncStatus> SyncStatuses,
     IReadOnlyList<int> Years)
 {
     public int CoverageDays => Snapshot.DataFrom is null || Snapshot.DataTo is null ? 0 : (Snapshot.DataTo.Value.Date - Snapshot.DataFrom.Value.Date).Days + 1;

@@ -6,42 +6,12 @@ public static class DatabaseSchema
     public const string Sql = """
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS accounts(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, account_type INTEGER NOT NULL,
-          provider TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'GBP', balance NUMERIC NOT NULL DEFAULT 0,
-          is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS account_transactions(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-          occurred_on TEXT NOT NULL, amount NUMERIC NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS ix_transactions_date ON account_transactions(occurred_on);
         CREATE TABLE IF NOT EXISTS energy_records(
           id INTEGER PRIMARY KEY AUTOINCREMENT, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
           flow_type INTEGER NOT NULL, quantity_kwh NUMERIC NOT NULL, cost_gbp NUMERIC NOT NULL DEFAULT 0,
           source TEXT NOT NULL, standing_charge_gbp NUMERIC NOT NULL DEFAULT 0, tariff_code TEXT NOT NULL DEFAULT '', cost_available INTEGER NOT NULL DEFAULT 0, external_id TEXT NULL UNIQUE);
         CREATE INDEX IF NOT EXISTS ix_energy_period_type ON energy_records(period_start, flow_type);
         CREATE UNIQUE INDEX IF NOT EXISTS ux_energy_external_id ON energy_records(external_id) WHERE external_id IS NOT NULL;
-        CREATE TABLE IF NOT EXISTS investment_positions(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-          symbol TEXT NOT NULL, name TEXT NOT NULL, quantity NUMERIC NOT NULL, unit_price NUMERIC NOT NULL,
-          cost_basis NUMERIC NOT NULL, as_of_date TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS investment_contributions(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-          contributed_on TEXT NOT NULL, amount NUMERIC NOT NULL);
-        CREATE TABLE IF NOT EXISTS pension_values(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-          as_of_date TEXT NOT NULL, value NUMERIC NOT NULL, employee_contribution NUMERIC NOT NULL,
-          employer_contribution NUMERIC NOT NULL);
-        CREATE TABLE IF NOT EXISTS rsu_grants(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT NOT NULL, grant_date TEXT NOT NULL,
-          total_shares INTEGER NOT NULL, tax_rate NUMERIC NOT NULL, currency TEXT NOT NULL DEFAULT 'GBP');
-        CREATE TABLE IF NOT EXISTS rsu_vesting_events(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL REFERENCES rsu_grants(id) ON DELETE CASCADE,
-          vest_date TEXT NOT NULL, shares INTEGER NOT NULL, share_price NUMERIC NOT NULL);
-        CREATE TABLE IF NOT EXISTS property_values(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, as_of_date TEXT NOT NULL,
-          value NUMERIC NOT NULL, mortgage_balance NUMERIC NOT NULL);
-        CREATE TABLE IF NOT EXISTS net_worth_snapshots(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, as_of_date TEXT NOT NULL UNIQUE, assets NUMERIC NOT NULL, liabilities NUMERIC NOT NULL);
         CREATE TABLE IF NOT EXISTS settings(
           key TEXT PRIMARY KEY, value TEXT NOT NULL, is_secret INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sync_runs(
@@ -76,10 +46,6 @@ public static class DatabaseSchema
           id INTEGER PRIMARY KEY CHECK(id=1), detected_start_date TEXT NULL, detection_confidence INTEGER NOT NULL DEFAULT 0,
           detection_method TEXT NOT NULL DEFAULT 'No sustained export detected', manual_override_date TEXT NULL, detected_at TEXT NULL);
         INSERT OR IGNORE INTO solar_analysis_configuration(id) VALUES(1);
-        CREATE TABLE IF NOT EXISTS energy_project_foundations(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL, project_cost NUMERIC NULL,
-          start_date TEXT NOT NULL, accumulated_benefit NUMERIC NOT NULL DEFAULT 0, source_event_id INTEGER NULL REFERENCES home_events(id) ON DELETE SET NULL,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(1, datetime('now'));
         INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(2, datetime('now'));
         INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(3, datetime('now'));

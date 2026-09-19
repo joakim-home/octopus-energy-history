@@ -12,10 +12,10 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
     private readonly ISecretProtector secretProtector;
     private bool solarConfigurationRefreshed;
 
-    public SqliteDashboardRepository(string databasePath, ISecretProtector? secretProtector = null)
+    public SqliteDashboardRepository(string databasePath, ISecretProtector secretProtector)
     {
         this.databasePath = databasePath;
-        this.secretProtector = secretProtector ?? new WindowsDpapiSecretProtector();
+        this.secretProtector = secretProtector ?? throw new ArgumentNullException(nameof(secretProtector));
     }
 
     private string ConnectionString => new SqliteConnectionStringBuilder { DataSource = databasePath, ForeignKeys = true, Pooling = false }.ToString();
@@ -53,45 +53,6 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         await using var alter = connection.CreateCommand(); alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}"; await alter.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task SeedSampleDataAsync(CancellationToken cancellationToken = default)
-    {
-        await using var connection = Open();
-        await using var count = connection.CreateCommand(); count.CommandText = "SELECT COUNT(*) FROM energy_records WHERE source='Sample'";
-        if (Convert.ToInt64(await count.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) > 0) return;
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var now = DateTimeOffset.UtcNow;
-        for (var i = 29; i >= 0; i--)
-        {
-            var day = now.Date.AddDays(-i); var import = 9m + i % 5; var export = i < 14 ? 0m : 2.2m + i % 4; var gas = i % 6 == 0 ? 8m : 3.5m + (i % 3);
-            foreach (var item in new[] { (EnergyFlowType.ElectricityImport, import, import * .245m), (EnergyFlowType.ElectricityExport, export, -export * .15m), (EnergyFlowType.Gas, gas, gas * .065m) })
-            {
-                await using var cmd = connection.CreateCommand(); cmd.Transaction = (SqliteTransaction)transaction;
-                cmd.CommandText = "INSERT INTO energy_records(period_start,period_end,flow_type,quantity_kwh,cost_gbp,source) VALUES(@s,@e,@f,@q,@c,'Sample')";
-                cmd.Parameters.AddWithValue("@s", day.ToString("O")); cmd.Parameters.AddWithValue("@e", day.AddDays(1).ToString("O"));
-                cmd.Parameters.AddWithValue("@f", (int)item.Item1); cmd.Parameters.AddWithValue("@q", item.Item2); cmd.Parameters.AddWithValue("@c", item.Item3);
-                await cmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-        }
-        await transaction.CommitAsync(cancellationToken);
-    }
-
-    public async Task<IReadOnlyList<Account>> GetAccountsAsync(CancellationToken cancellationToken = default)
-    {
-        var result = new List<Account>(); await using var connection = Open(); await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,name,account_type,provider,currency,balance,is_active FROM accounts ORDER BY account_type,name";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetInt64(0), reader.GetString(1), (AccountType)reader.GetInt32(2), reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6)));
-        return result;
-    }
-
-    public async Task AddAccountAsync(string name, AccountType type, string provider, decimal balance, CancellationToken cancellationToken = default)
-    {
-        await using var connection = Open(); await using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO accounts(name,account_type,provider,currency,balance,is_active,created_at) VALUES(@n,@t,@p,'GBP',@b,1,@at)";
-        command.Parameters.AddWithValue("@n", name); command.Parameters.AddWithValue("@t", (int)type); command.Parameters.AddWithValue("@p", provider); command.Parameters.AddWithValue("@b", balance); command.Parameters.AddWithValue("@at", DateTimeOffset.UtcNow.ToString("O"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     public async Task SetSettingAsync(string key, string value, bool isSecret = false, CancellationToken cancellationToken = default)
     {
         var storedValue = isSecret ? secretProtector.Protect(value) : value;
@@ -113,7 +74,7 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         catch (PlatformNotSupportedException) { return null; }
     }
 
-    public async Task UpsertDailyEnergyAsync(IReadOnlyCollection<DailyEnergyReading> readings, CancellationToken cancellationToken = default)
+    private async Task UpsertDailyEnergyAsync(IReadOnlyCollection<DailyEnergyReading> readings, CancellationToken cancellationToken = default)
     {
         if (readings.Count == 0) return;
         await using var connection = Open(); await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -287,6 +248,15 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
     public async Task InsertMissingOctopusStandingChargesAsync(IReadOnlyCollection<OctopusStandingCharge> charges, CancellationToken cancellationToken = default)
         => await StoreOctopusStandingChargesAsync(charges, true, cancellationToken);
 
+    public async Task<DateOnly?> GetLatestOctopusStandingChargeDateAsync(string meterPoint, string tariffCode, CancellationToken cancellationToken = default)
+    {
+        await using var connection=Open(); await using var command=connection.CreateCommand();
+        command.CommandText="SELECT MAX(date) FROM octopus_standing_charges WHERE meter_point=@point AND tariff_code=@tariff";
+        command.Parameters.AddWithValue("@point",meterPoint); command.Parameters.AddWithValue("@tariff",tariffCode);
+        var value=await command.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ? null : DateOnly.Parse(Convert.ToString(value,CultureInfo.InvariantCulture)!,CultureInfo.InvariantCulture);
+    }
+
     private async Task StoreOctopusStandingChargesAsync(IReadOnlyCollection<OctopusStandingCharge> charges, bool insertOnly, CancellationToken cancellationToken)
     {
         if (charges.Count == 0) return; await using var connection = Open(); await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -307,7 +277,17 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         {
             var solarCapacity = await ReadSolarCapacityKwpAsync(connection, cancellationToken);
             var solar = await RefreshSolarDetectionAsync(connection, cancellationToken); solarDate = solar.EffectiveStartDate?.ToString("O");
-            await using (var charges = connection.CreateCommand()) { charges.CommandText = "SELECT date,SUM(cost_gbp) FROM octopus_standing_charges GROUP BY date"; await using var reader = await charges.ExecuteReaderAsync(cancellationToken); while (await reader.ReadAsync(cancellationToken)) standing[DateOnly.Parse(reader.GetString(0), CultureInfo.InvariantCulture)] = reader.GetDecimal(1); }
+            await using (var charges = connection.CreateCommand()) { charges.CommandText = """
+                WITH usage_meters AS (
+                  SELECT DISTINCT substr(period_start,1,10) AS day,meter_point
+                  FROM octopus_effective_readings
+                  WHERE flow_type IN (0,2)
+                )
+                SELECT sc.date,SUM(sc.cost_gbp)
+                FROM octopus_standing_charges sc
+                JOIN usage_meters usage ON usage.day=sc.date AND usage.meter_point=sc.meter_point
+                GROUP BY sc.date
+                """; await using var reader = await charges.ExecuteReaderAsync(cancellationToken); while (await reader.ReadAsync(cancellationToken)) standing[DateOnly.Parse(reader.GetString(0), CultureInfo.InvariantCulture)] = decimal.Round(reader.GetDecimal(1),8); }
             await using var command = connection.CreateCommand(); command.CommandText = """
                 WITH export_daily AS (
                   SELECT substr(period_start,1,10) AS export_date,SUM(quantity_kwh) AS export_kwh
@@ -331,9 +311,11 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
             await using var values = await command.ExecuteReaderAsync(cancellationToken);
             while (await values.ReadAsync(cancellationToken))
             {
-                var date = DateOnly.Parse(values.GetString(0), CultureInfo.InvariantCulture); var flow = (EnergyFlowType)values.GetInt32(1); var extra = flow == EnergyFlowType.Gas && standing.TryGetValue(date, out var charge) ? charge : 0;
-                daily.Add(new(date, flow, values.GetDecimal(2), values.GetDecimal(3) + extra, "Octopus", $"octopus:{flow}:{date:yyyy-MM-dd}", extra, values.IsDBNull(5) ? "" : values.GetString(5), values.GetBoolean(4) && (flow != EnergyFlowType.Gas || standing.ContainsKey(date))));
+                var date = DateOnly.Parse(values.GetString(0), CultureInfo.InvariantCulture); var flow = (EnergyFlowType)values.GetInt32(1);
+                daily.Add(new(date, flow, values.GetDecimal(2), values.GetDecimal(3), "Octopus", $"octopus:{flow}:{date:yyyy-MM-dd}", 0, values.IsDBNull(5) ? "" : values.GetString(5), values.GetBoolean(4)));
             }
+            foreach (var charge in standing.OrderBy(x => x.Key))
+                daily.Add(new(charge.Key, EnergyFlowType.SiteConsumption, 0, 0, "Octopus", $"octopus:standing:{charge.Key:yyyy-MM-dd}", charge.Value, "standing-charge", true));
         }
         await using (var cleanup = Open()) { await using var command = cleanup.CreateCommand(); command.CommandText = "DELETE FROM energy_records WHERE source='Octopus'"; await command.ExecuteNonQueryAsync(cancellationToken); }
         await UpsertDailyEnergyAsync(daily, cancellationToken);
@@ -412,10 +394,70 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         await using var connection = Open(); var today = DateOnly.FromDateTime(DateTime.Now); var month = new DateOnly(today.Year, today.Month, 1); var year = new DateOnly(today.Year, 1, 1);
         async Task<decimal> Sum(EnergyFlowType flow, DateOnly from, DateOnly? to = null) { await using var command = connection.CreateCommand(); command.CommandText = "SELECT COALESCE(SUM(quantity_kwh),0) FROM energy_records WHERE source='Octopus' AND flow_type=@flow AND period_start>=@from" + (to is null ? "" : " AND period_start<@to"); command.Parameters.AddWithValue("@flow", (int)flow); command.Parameters.AddWithValue("@from", from.ToString("O")); if (to is not null) command.Parameters.AddWithValue("@to", to.Value.ToString("O")); return Convert.ToDecimal(await command.ExecuteScalarAsync(cancellationToken) ?? 0, CultureInfo.InvariantCulture); }
         async Task<(decimal Cost,bool Exact)> FlowCost(EnergyFlowType flow, DateOnly from, DateOnly? to) { await using var command = connection.CreateCommand(); command.CommandText = "SELECT COALESCE(SUM(cost_gbp),0),COUNT(*),COALESCE(MIN(cost_available),0) FROM energy_records WHERE source='Octopus' AND flow_type=@flow AND period_start>=@from" + (to is null ? "" : " AND period_start<@to"); command.Parameters.AddWithValue("@flow",(int)flow); command.Parameters.AddWithValue("@from",from.ToString("O")); if(to is not null) command.Parameters.AddWithValue("@to",to.Value.ToString("O")); await using var reader=await command.ExecuteReaderAsync(cancellationToken); await reader.ReadAsync(cancellationToken); return (reader.GetDecimal(0),reader.GetInt32(1)>0&&reader.GetBoolean(2)); }
-        async Task<EnergyCostPeriod> Costs(DateOnly from, DateOnly? to) { var import=await FlowCost(EnergyFlowType.ElectricityImport,from,to); var export=await FlowCost(EnergyFlowType.ElectricityExport,from,to); var gas=await FlowCost(EnergyFlowType.Gas,from,to); return new(import.Cost,-export.Cost,gas.Cost,import.Exact,export.Exact,gas.Exact); }
+        async Task<(decimal Cost,bool Exact)> StandingCost(DateOnly from, DateOnly? to)
+        {
+            await using var command=connection.CreateCommand();
+            command.CommandText="""
+                WITH usage_meters AS (
+                  SELECT DISTINCT substr(period_start,1,10) AS day,meter_point
+                  FROM octopus_effective_readings
+                  WHERE flow_type IN (0,2) AND period_start>=@from
+                  AND (@to IS NULL OR period_start<@to)
+                ),
+                expected AS (
+                  SELECT day,COUNT(*) AS expected_count FROM usage_meters GROUP BY day
+                ),
+                actual AS (
+                  SELECT sc.date AS day,COUNT(DISTINCT sc.meter_point) AS actual_count,SUM(sc.cost_gbp) AS cost
+                  FROM octopus_standing_charges sc
+                  JOIN usage_meters usage ON usage.day=sc.date AND usage.meter_point=sc.meter_point
+                  GROUP BY sc.date
+                )
+                SELECT COALESCE(SUM(actual.cost),0),COUNT(expected.day),
+                       COALESCE(MIN(CASE WHEN COALESCE(actual.actual_count,0)>=expected.expected_count THEN 1 ELSE 0 END),0)
+                FROM expected LEFT JOIN actual ON actual.day=expected.day
+                """;
+            command.Parameters.AddWithValue("@from",from.ToString("O"));
+            command.Parameters.AddWithValue("@to",to is null?DBNull.Value:to.Value.ToString("O"));
+            await using var reader=await command.ExecuteReaderAsync(cancellationToken); await reader.ReadAsync(cancellationToken);
+            return(decimal.Round(reader.GetDecimal(0),8),reader.GetInt32(1)>0&&reader.GetBoolean(2));
+        }
+        async Task<EnergyCostPeriod> Costs(DateOnly from, DateOnly? to) { var import=await FlowCost(EnergyFlowType.ElectricityImport,from,to); var export=await FlowCost(EnergyFlowType.ElectricityExport,from,to); var gas=await FlowCost(EnergyFlowType.Gas,from,to); var standing=await StandingCost(from,to); return new(import.Cost,-export.Cost,gas.Cost,import.Exact,export.Exact,gas.Exact,standing.Cost,standing.Exact); }
         var daily = new List<EnergyPeriodPoint>(); await using (var command = connection.CreateCommand()) { command.CommandText = "SELECT substr(period_start,1,10),SUM(CASE WHEN flow_type=0 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=1 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=2 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=0 THEN cost_gbp ELSE 0 END),-SUM(CASE WHEN flow_type=1 THEN cost_gbp ELSE 0 END),SUM(CASE WHEN flow_type=2 THEN cost_gbp ELSE 0 END),CASE WHEN SUM(CASE WHEN flow_type=0 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=0 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END,CASE WHEN SUM(CASE WHEN flow_type=1 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=1 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END,CASE WHEN SUM(CASE WHEN flow_type=2 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=2 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END FROM energy_records WHERE source='Octopus' AND period_start>=@from GROUP BY substr(period_start,1,10) ORDER BY 1"; command.Parameters.AddWithValue("@from", today.AddYears(-2).ToString("O")); await using var reader = await command.ExecuteReaderAsync(cancellationToken); while (await reader.ReadAsync(cancellationToken)) daily.Add(new(DateOnly.Parse(reader.GetString(0),CultureInfo.InvariantCulture),reader.GetDecimal(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetBoolean(7),reader.GetBoolean(8),reader.GetBoolean(9))); }
         var monthly = new List<EnergyPeriodPoint>(); await using (var command = connection.CreateCommand()) { command.CommandText = "SELECT period_start,SUM(CASE WHEN flow_type=0 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=1 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=2 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=0 THEN cost_gbp ELSE 0 END),-SUM(CASE WHEN flow_type=1 THEN cost_gbp ELSE 0 END),SUM(CASE WHEN flow_type=2 THEN cost_gbp ELSE 0 END),CASE WHEN SUM(CASE WHEN flow_type=0 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=0 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END,CASE WHEN SUM(CASE WHEN flow_type=1 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=1 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END,CASE WHEN SUM(CASE WHEN flow_type=2 THEN 1 ELSE 0 END)>0 AND MIN(CASE WHEN flow_type=2 THEN cost_available ELSE 1 END)=1 THEN 1 ELSE 0 END FROM energy_monthly_rollups WHERE source='Octopus' GROUP BY period_start ORDER BY period_start"; await using var reader = await command.ExecuteReaderAsync(cancellationToken); while (await reader.ReadAsync(cancellationToken)) monthly.Add(new(DateOnly.Parse(reader.GetString(0),CultureInfo.InvariantCulture),reader.GetDecimal(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetBoolean(7),reader.GetBoolean(8),reader.GetBoolean(9))); }
         await ApplyImportBands(daily,false,today.AddYears(-2)); await ApplyImportBands(monthly,true,today.AddYears(-2));
+        await ApplyStandingCharges(daily,false,today.AddYears(-2)); await ApplyStandingCharges(monthly,true,today.AddYears(-2));
+
+        async Task ApplyStandingCharges(List<EnergyPeriodPoint> points,bool byMonth,DateOnly from)
+        {
+            var values=new Dictionary<DateOnly,(decimal Cost,bool Exact)>(); await using var command=connection.CreateCommand();
+            var bucket=byMonth?"substr(expected.day,1,7)":"expected.day";
+            command.CommandText=$"""
+                WITH usage_meters AS (
+                  SELECT DISTINCT substr(period_start,1,10) AS day,meter_point
+                  FROM octopus_effective_readings
+                  WHERE flow_type IN (0,2) AND period_start>=@from
+                ),
+                expected AS (
+                  SELECT day,COUNT(*) AS expected_count FROM usage_meters GROUP BY day
+                ),
+                actual AS (
+                  SELECT sc.date AS day,COUNT(DISTINCT sc.meter_point) AS actual_count,SUM(sc.cost_gbp) AS cost
+                  FROM octopus_standing_charges sc
+                  JOIN usage_meters usage ON usage.day=sc.date AND usage.meter_point=sc.meter_point
+                  GROUP BY sc.date
+                )
+                SELECT {bucket},COALESCE(SUM(actual.cost),0),
+                       MIN(CASE WHEN COALESCE(actual.actual_count,0)>=expected.expected_count THEN 1 ELSE 0 END)
+                FROM expected LEFT JOIN actual ON actual.day=expected.day
+                GROUP BY 1
+                """;
+            command.Parameters.AddWithValue("@from",from.ToString("O")); await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+            while(await reader.ReadAsync(cancellationToken)) { var key=DateOnly.Parse(byMonth?$"{reader.GetString(0)}-01":reader.GetString(0),CultureInfo.InvariantCulture); values[key]=(decimal.Round(reader.GetDecimal(1),8),reader.GetBoolean(2)); }
+            for(var index=0;index<points.Count;index++) points[index]=values.TryGetValue(points[index].Period,out var value)
+                ? points[index] with { StandingChargeGbp=value.Cost,StandingChargeExact=value.Exact }
+                : points[index] with { StandingChargeExact=false };
+        }
 
         async Task ApplyImportBands(List<EnergyPeriodPoint> points,bool byMonth,DateOnly from)
         {
@@ -577,29 +619,5 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
     {
         await using var connection = Open(); await using var command = connection.CreateCommand(); command.CommandText = "DELETE FROM home_events WHERE id=@id"; command.Parameters.AddWithValue("@id", id); await command.ExecuteNonQueryAsync(cancellationToken);
         await command.DisposeAsync(); await connection.DisposeAsync();
-    }
-
-    public async Task<DashboardSnapshot> GetDashboardAsync(CancellationToken cancellationToken = default)
-    {
-        await using var c = Open(); var now = DateTimeOffset.UtcNow; var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero); var year = now.AddYears(-1);
-        async Task<decimal> Scalar(string sql, params (string, object)[] args) { await using var cmd = c.CreateCommand(); cmd.CommandText = sql; foreach (var (key,value) in args) cmd.Parameters.AddWithValue(key,value); return Convert.ToDecimal(await cmd.ExecuteScalarAsync(cancellationToken) ?? 0, CultureInfo.InvariantCulture); }
-        var cash = await Scalar("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type IN (0,1) AND is_active=1");
-        var debt = await Scalar("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE account_type IN (2,3) AND is_active=1");
-        var investments = await Scalar("SELECT COALESCE(SUM(quantity*unit_price),0) FROM investment_positions p WHERE as_of_date=(SELECT MAX(as_of_date) FROM investment_positions WHERE account_id=p.account_id)");
-        var pensions = await Scalar("SELECT COALESCE(SUM(value),0) FROM pension_values p WHERE as_of_date=(SELECT MAX(as_of_date) FROM pension_values WHERE account_id=p.account_id)");
-        var property = await Scalar("SELECT COALESCE(value,0) FROM property_values ORDER BY as_of_date DESC LIMIT 1");
-        var mortgage = await Scalar("SELECT COALESCE(mortgage_balance,0) FROM property_values ORDER BY as_of_date DESC LIMIT 1");
-        var spending = -await Scalar("SELECT COALESCE(SUM(amount),0) FROM account_transactions WHERE amount<0 AND occurred_on>=@d", ("@d", month.ToString("O")));
-        var savings = await Scalar("SELECT COALESCE(SUM(amount),0) FROM account_transactions WHERE category='Savings' AND occurred_on>=@d", ("@d", month.ToString("O")));
-        async Task<decimal> Energy(EnergyFlowType flow, DateTimeOffset since, bool cost=false) => await Scalar($"SELECT COALESCE(SUM({(cost ? "cost_gbp" : "quantity_kwh")}),0) FROM energy_records WHERE flow_type=@f AND period_start>=@d", ("@f",(int)flow),("@d",since.ToString("O")));
-        var todayImport = await Energy(EnergyFlowType.ElectricityImport, new DateTimeOffset(now.Date, TimeSpan.Zero)); var monthImport = await Energy(EnergyFlowType.ElectricityImport, month);
-        var monthExport = await Energy(EnergyFlowType.ElectricityExport, month); var solar = await Energy(EnergyFlowType.SolarGeneration, month); var siteConsumption = await Energy(EnergyFlowType.SiteConsumption, month); var gas = await Energy(EnergyFlowType.Gas, month);
-        var todayGas = await Energy(EnergyFlowType.Gas, new DateTimeOffset(now.Date, TimeSpan.Zero)); var exportIncome = -await Energy(EnergyFlowType.ElectricityExport, month, true);
-        var electricityCost = await Energy(EnergyFlowType.ElectricityImport, month, true); var gasCost = await Energy(EnergyFlowType.Gas, month, true); var bill = electricityCost + gasCost; var netEnergyCost = bill - exportIncome;
-        var solarSavings = solar * .72m * .245m + exportIncome; var annualSavings = await Energy(EnergyFlowType.SolarGeneration, year) * .72m * .245m - await Energy(EnergyFlowType.ElectricityExport, year, true);
-        var charts = new List<ChartPoint>(); await using (var cmd = c.CreateCommand()) { cmd.CommandText = "SELECT substr(period_start,1,10),SUM(CASE WHEN flow_type=0 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=3 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=1 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=2 THEN quantity_kwh ELSE 0 END),SUM(CASE WHEN flow_type=6 THEN quantity_kwh ELSE 0 END) FROM energy_records WHERE period_start>=@d GROUP BY substr(period_start,1,10) ORDER BY 1"; cmd.Parameters.AddWithValue("@d",now.AddDays(-14).ToString("O")); await using var r=await cmd.ExecuteReaderAsync(cancellationToken); while(await r.ReadAsync(cancellationToken)) charts.Add(new(DateOnly.Parse(r.GetString(0),CultureInfo.InvariantCulture),r.GetDecimal(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5))); }
-        var vesting = new List<RsuEvent>(); await using (var cmd=c.CreateCommand()) { cmd.CommandText="SELECT v.vest_date,v.shares,v.share_price,g.tax_rate FROM rsu_vesting_events v JOIN rsu_grants g ON g.id=v.grant_id WHERE v.vest_date>=@d ORDER BY v.vest_date LIMIT 5"; cmd.Parameters.AddWithValue("@d",now.ToString("yyyy-MM-dd")); await using var r=await cmd.ExecuteReaderAsync(cancellationToken); while(await r.ReadAsync(cancellationToken)){var gross=r.GetInt32(1)*r.GetDecimal(2); vesting.Add(new(DateOnly.Parse(r.GetString(0),CultureInfo.InvariantCulture),r.GetInt32(1),gross,gross*(1-r.GetDecimal(3))));} }
-        var liabilities = debt + mortgage; var netWorth = cash + investments + pensions + property - liabilities;
-        return new(cash, investments, pensions, property-mortgage, liabilities, netWorth, spending, savings, todayImport, monthImport, monthExport, solar, siteConsumption, gas, exportIncome, bill, bill+solarSavings, solarSavings, annualSavings, FinancialForecasting.SolarPaybackPercent(annualSavings), todayGas, electricityCost, gasCost, bill, netEnergyCost, charts, vesting);
     }
 }

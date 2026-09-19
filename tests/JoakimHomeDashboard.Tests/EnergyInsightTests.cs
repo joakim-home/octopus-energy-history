@@ -10,8 +10,8 @@ public sealed class EnergyInsightTests
     {
         var points = new[]
         {
-            Point(new(2026, 1, 1), 10m, 4m, 20m, 2m, 0.6m, 1m, 6m, 4m, 1.4m, 0.6m),
-            Point(new(2026, 1, 2), 12m, 3m, 18m, 3m, 0.45m, 0.9m, 7m, 5m, 1.8m, 1.2m),
+            Point(new(2026, 1, 1), 10m, 4m, 20m, 2m, 0.6m, 1m, 6m, 4m, 1.4m, 0.6m) with { StandingChargeGbp = 0.25m },
+            Point(new(2026, 1, 2), 12m, 3m, 18m, 3m, 0.45m, 0.9m, 7m, 5m, 1.8m, 1.2m) with { StandingChargeGbp = 0.25m },
             Point(new(2026, 2, 1), 8m, 2m, 15m, 1.8m, 0.3m, 0.8m, 3m, 5m, 0.7m, 1.1m)
         };
 
@@ -22,6 +22,7 @@ public sealed class EnergyInsightTests
         Assert.Equal(5m, january.ImportCostGbp);
         Assert.Equal(1.05m, january.ExportIncomeGbp);
         Assert.Equal(3.95m, january.NetElectricityCostGbp);
+        Assert.Equal(0.50m, january.StandingChargeGbp);
     }
 
     [Fact]

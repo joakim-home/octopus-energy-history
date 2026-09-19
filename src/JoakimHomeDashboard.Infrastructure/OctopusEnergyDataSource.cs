@@ -78,46 +78,62 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                 var rates = new List<OctopusRate>(); var standing = new List<OctopusRate>();
                 foreach (var period in periods)
                 {
-                    var periodFrom = period.ValidFrom is not null && period.ValidFrom > from ? period.ValidFrom.Value : from; var periodTo = period.ValidTo is not null && period.ValidTo < to ? period.ValidTo.Value : to; if (periodFrom >= periodTo) continue;
+                    var agreementFrom = period.ValidFrom ?? from;
+                    var agreementTo = period.ValidTo is not null && period.ValidTo < to ? period.ValidTo.Value : to;
+                    var usageFrom = agreementFrom > from ? agreementFrom : from;
+                    var usageTo = agreementTo;
+                    var needsUsage = usageFrom < usageTo;
+                    var latestStanding = meter.IsExport ? null : await readingStore.GetLatestOctopusStandingChargeDateAsync(meter.MeterPoint, period.TariffCode, cancellationToken);
+                    var standingFrom = latestStanding is null
+                        ? agreementFrom
+                        : new DateTimeOffset(latestStanding.Value.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+                    if (standingFrom < agreementFrom) standingFrom = agreementFrom;
+                    var needsStanding = !meter.IsExport && standingFrom < agreementTo;
+                    if (!needsUsage && !needsStanding) continue;
                     if (string.IsNullOrWhiteSpace(period.ProductCode)) { unavailableTariffs.Add(period.TariffCode); continue; }
                     try
                     {
-                        var metadata = await LoadMetadata(period, settings.ApiKey, periodFrom, cancellationToken);
-                        if (!metadata.CanPriceMeterIntervals)
+                        var metadataDate = needsUsage ? usageFrom : standingFrom;
+                        var metadata = await LoadMetadata(period, settings.ApiKey, metadataDate, cancellationToken);
+
+                        if (needsUsage)
                         {
-                            if (metadata.Semantics == OctopusProductSemantics.FourRateEv)
+                            if (metadata.CanPriceMeterIntervals)
+                            {
+                                rates.AddRange((await ReadEndpoint("standard_unit_rates", usageFrom, usageTo)).Select(rate => rate with
+                                {
+                                    Start = rate.Start < usageFrom ? usageFrom : rate.Start,
+                                    End = rate.End > usageTo ? usageTo : rate.End,
+                                    TariffCode = period.TariffCode,
+                                    Semantics = metadata.Semantics
+                                }).Where(rate => rate.Start < rate.End));
+                            }
+                            else if (metadata.Semantics == OctopusProductSemantics.FourRateEv)
                             {
                                 pricingWarnings.Add($"{period.TariffCode}: four-rate EV pricing is withheld pending authoritative home/EV allocation. Historical repricing is disabled.");
                                 foreach (var relation in new[] { "day_unit_rates", "night_unit_rates", "ev_device_peak_unit_rates", "ev_device_off_peak_unit_rates" })
-                                    await ReadEndpoint(relation); // Inspect availability only; never flatten register rates into a meter rate.
+                                    await ReadEndpoint(relation, usageFrom, usageTo); // Inspect availability only; never flatten register rates into a meter rate.
                             }
                             else unavailableTariffs.Add(period.TariffCode);
-                            continue;
                         }
-                        rates.AddRange((await ReadEndpoint("standard_unit_rates")).Select(rate => rate with
-                        {
-                            Start = rate.Start < periodFrom ? periodFrom : rate.Start,
-                            End = rate.End > periodTo ? periodTo : rate.End,
-                            TariffCode = period.TariffCode,
-                            Semantics = metadata.Semantics
-                        }).Where(rate => rate.Start < rate.End));
-                        var standingKey = $"{meter.AccountNumber}:{meter.PropertyId}:{meter.MeterPoint}:{period.TariffCode}";
-                        if (meter.FuelType == "gas" && standingApplied.Add(standingKey))
-                            standing.AddRange((await ReadEndpoint("standing_charges")).Select(rate => rate with
+
+                        var standingKey = $"{meter.AccountNumber}:{meter.PropertyId}:{meter.MeterPoint}:{period.TariffCode}:{period.ValidFrom:O}";
+                        if (needsStanding && standingApplied.Add(standingKey))
+                            standing.AddRange((await ReadEndpoint("standing_charges", standingFrom, agreementTo)).Select(rate => rate with
                             {
-                                Start = rate.Start < periodFrom ? periodFrom : rate.Start,
-                                End = rate.End > periodTo ? periodTo : rate.End,
+                                Start = rate.Start < standingFrom ? standingFrom : rate.Start,
+                                End = rate.End > agreementTo ? agreementTo : rate.End,
                                 TariffCode = period.TariffCode
                             }).Where(rate => rate.Start < rate.End));
 
-                        async Task<List<OctopusRate>> ReadEndpoint(string relation)
+                        async Task<List<OctopusRate>> ReadEndpoint(string relation, DateTimeOffset endpointFrom, DateTimeOffset endpointTo)
                         {
                             if (!metadata.Endpoints.TryGetValue(relation, out var endpoint))
                             {
                                 pricingWarnings.Add($"{period.TariffCode}: product metadata has no {relation} endpoint.");
                                 return [];
                             }
-                            var result = await LoadRates(endpoint, settings.ApiKey, periodFrom, periodTo, cancellationToken);
+                            var result = await LoadRates(endpoint, settings.ApiKey, endpointFrom, endpointTo, cancellationToken);
                             if (result.Count == 0) pricingWarnings.Add($"{period.TariffCode}: {relation} returned HTTP success with an empty rate collection for the requested period.");
                             return result;
                         }
@@ -132,7 +148,8 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                 if (newlyImported.Count > 0) { importedFrom = importedFrom is null || newlyImported[0].PeriodStart < importedFrom ? newlyImported[0].PeriodStart : importedFrom; importedTo = importedTo is null || newlyImported[^1].PeriodEnd > importedTo ? newlyImported[^1].PeriodEnd : importedTo; }
                 if (standing.Count > 0)
                 {
-                    var charges = Enumerable.Range(0, Math.Max(0, (to.Date - from.Date).Days + 1)).Select(offset => DateOnly.FromDateTime(from.Date.AddDays(offset))).Select(date =>
+                    var standingFrom = standing.Min(x => x.Start).Date;
+                    var charges = Enumerable.Range(0, Math.Max(0, (to.Date - standingFrom).Days + 1)).Select(offset => DateOnly.FromDateTime(standingFrom.AddDays(offset))).Select(date =>
                     {
                         var instant = new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
                         var matches = standing.Where(x => instant >= x.Start && instant < x.End).DistinctBy(x => (x.PencePerKwh,x.TariffCode)).ToArray();

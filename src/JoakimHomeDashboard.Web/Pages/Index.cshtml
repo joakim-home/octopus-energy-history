@@ -5,70 +5,164 @@
     ViewData["Page"] = "Overview";
     var d = Model.Data;
     var s = d.Snapshot;
-    var monthCombined = s.MonthCost.ImportCost - s.MonthCost.ExportIncome + s.MonthCost.GasCost;
+    var monthCombined = s.MonthCost.NetCost;
+    var monthStandingCharge = s.MonthCost.StandingCharge;
+    var monthGasUsageCost = s.MonthCost.GasCost;
     var missingMonthAllocation = s.SupplierAllocationMonths.Any(x => x.Month == DateTime.Today.ToString("yyyy-MM") && !x.Complete);
-    var missingYearAllocation = s.SupplierAllocationMonths.Any(x => x.Month.StartsWith(DateTime.Today.Year.ToString()) && !x.Complete);
-    var yearCombined = s.YearCost.ImportCost - s.YearCost.ExportIncome + s.YearCost.GasCost;
+    var octopusStatuses = d.SyncStatuses.Where(x => x.Source.StartsWith("Octopus", StringComparison.OrdinalIgnoreCase)).ToArray();
+    var connectorsHealthy = octopusStatuses.Length > 0 && octopusStatuses.All(x => x.Succeeded == true);
+    var solarImport = d.SolarAnalysis.Metrics.FirstOrDefault(x => x.Metric == "Average monthly import");
+    var solarExport = d.SolarAnalysis.Metrics.FirstOrDefault(x => x.Metric == "Average monthly export");
+    var solarNet = d.SolarAnalysis.Metrics.FirstOrDefault(x => x.Metric == "Average monthly net electricity cost");
+    var solarCombined = d.SolarAnalysis.Metrics.FirstOrDefault(x => x.Metric == "Average monthly combined utility cost");
 }
-<section class="page-head"><div><p class="eyebrow">ENERGY DASHBOARD</p><h1>Overview</h1><p>@d.CoverageDays.ToString("N0") days · @s.DataFrom?.ToString("dd MMM yyyy") – @s.DataTo?.ToString("dd MMM yyyy")</p></div><form method="post" asp-page-handler="Sync"><button class="primary">Sync Octopus</button></form></section>
+<section class="page-head dashboard-head">
+    <div>
+        <p class="eyebrow">ENERGY DASHBOARD</p>
+        <h1>Overview</h1>
+        <p>@d.CoverageDays.ToString("N0") days · @s.DataFrom?.ToString("dd MMM yyyy") – @s.DataTo?.ToString("dd MMM yyyy")</p>
+    </div>
+    <div class="head-actions">
+        <div class="segmented" aria-label="Dashboard period">
+            <button type="button" data-period="day">Day</button>
+            <button type="button" data-period="month" class="active">Month</button>
+            <button type="button" data-period="year">Year</button>
+        </div>
+        <form method="post" asp-page-handler="Sync"><button class="primary">Sync Octopus</button></form>
+    </div>
+</section>
+
 @if (TempData["Message"] is string message) { <div class="notice">@message</div> }
+
+@if (octopusStatuses.Length > 0)
+{
+    <div class="connector-strip @(connectorsHealthy ? "healthy" : "attention")">
+        <span>@(connectorsHealthy ? "✓" : "⚠")</span>
+        <strong>@(connectorsHealthy ? "All Octopus connectors healthy" : "Octopus connector needs attention")</strong>
+        <small>@s.SyncStatus?.CompletedAt?.LocalDateTime.ToString("g")</small>
+    </div>
+}
 
 <details class="quality @(d.QualityGroups.Count > 0 ? "attention" : "healthy")">
     <summary><span>@(d.QualityGroups.Count > 0 ? "⚠" : "✓")</span><strong>Data quality</strong><small>@(d.QualityGroups.Count == 0 ? "No data-quality issues detected" : $"{d.QualityGroups.Sum(x => x.Count)} issues across {d.QualityGroups.Count} categories")</small></summary>
     @foreach (var group in d.QualityGroups) { <div class="quality-group"><strong>@group.Title (@group.Count)</strong>@foreach (var warning in group.Warnings) { <p>@warning</p> }</div> }
 </details>
 
-<section class="metric-grid">
-    <article class="metric hero"><span>MONTH COMBINED UTILITY</span><b>@(missingMonthAllocation || !s.MonthCost.NetExact ? "Unavailable" : WebDashboardService.Money(monthCombined, s.MonthCost.NetExact))</b><small>@DateTime.Today.ToString("MMMM yyyy")</small></article>
-    <article class="metric"><span>MONTH IMPORT</span><b>@s.MonthImportKwh.ToString("N2") kWh</b><small>@(missingMonthAllocation ? "Unavailable" : WebDashboardService.Money(s.MonthCost.ImportCost, s.MonthCost.ImportExact)) energy @(s.SupplierAllocationMonths.Any(x => x.Month == DateTime.Today.ToString("yyyy-MM")) ? "· supplier estimate incl VAT" : "")</small></article>
-    <article class="metric"><span>MONTH EXPORT</span><b>@s.MonthExportKwh.ToString("N2") kWh</b><small>@WebDashboardService.Money(s.MonthCost.ExportIncome, s.MonthCost.ExportExact) income</small></article>
-    <article class="metric"><span>MONTH GAS</span><b>@s.MonthGasKwh.ToString("N2") kWh</b><small>@WebDashboardService.Money(s.MonthCost.GasCost, s.MonthCost.GasExact)</small></article>
-    <article class="metric"><span>MONTH PEAK IMPORT</span><b>@(missingMonthAllocation ? "Unavailable" : $"{s.MonthImportBreakdown.PeakKwh:N2} kWh")</b><small>@(missingMonthAllocation ? "Unavailable" : WebDashboardService.Money(s.MonthImportBreakdown.PeakCost, s.MonthImportBreakdown.PeakCostExact))</small></article>
-    <article class="metric"><span>MONTH OFF-PEAK IMPORT</span><b>@(missingMonthAllocation ? "Unavailable" : $"{s.MonthImportBreakdown.OffPeakKwh:N2} kWh")</b><small>@(missingMonthAllocation ? "Unavailable" : WebDashboardService.Money(s.MonthImportBreakdown.OffPeakCost, s.MonthImportBreakdown.OffPeakCostExact))</small></article>
-    <article class="metric"><span>YEAR COMBINED UTILITY</span><b>@(missingYearAllocation || !s.YearCost.NetExact ? "Unavailable" : WebDashboardService.Money(yearCombined, s.YearCost.NetExact))</b><small>@DateTime.Today.Year</small></article>
-    <article class="metric"><span>HISTORICAL COVERAGE</span><b>@d.CoverageDays.ToString("N0") days</b><small>From @s.DataFrom?.ToString("dd MMM yyyy")</small></article>
-    <article class="metric"><span>LAST SYNC</span><b>@(s.SyncStatus?.Succeeded == true ? "Synced" : "Needs attention")</b><small>@s.SyncStatus?.CompletedAt?.LocalDateTime.ToString("g")</small></article>
+<section class="metric-grid metric-grid-v2">
+    <article class="metric hero"><span id="metric-period-label">MONTH COMBINED UTILITY</span><b id="metric-combined">@(missingMonthAllocation || !s.MonthCost.NetExact ? "Unavailable" : WebDashboardService.Money(monthCombined, s.MonthCost.NetExact))</b><small id="metric-combined-sub">@DateTime.Today.ToString("MMMM yyyy")</small></article>
+    <article class="metric"><span>ELECTRICITY</span><b id="metric-electricity">@s.MonthImportKwh.ToString("N2") kWh</b><small id="metric-electricity-sub">@(missingMonthAllocation ? "Unavailable" : WebDashboardService.Money(s.MonthCost.ImportCost - s.MonthCost.ExportIncome, s.MonthCost.ImportExact && s.MonthCost.ExportExact)) net</small></article>
+    <article class="metric"><span>EXPORT</span><b id="metric-export">@s.MonthExportKwh.ToString("N2") kWh</b><small id="metric-export-sub">@WebDashboardService.Money(s.MonthCost.ExportIncome, s.MonthCost.ExportExact) income</small></article>
+    <article class="metric"><span>GAS</span><b id="metric-gas">@s.MonthGasKwh.ToString("N2") kWh</b><small id="metric-gas-sub">@(!s.MonthCost.GasExact ? "Usage cost unavailable" : s.MonthCost.StandingExact ? $"{WebDashboardService.Money(monthGasUsageCost)} usage · {WebDashboardService.Money(monthStandingCharge)} standing" : $"{WebDashboardService.Money(monthGasUsageCost)} usage · standing unavailable")</small></article>
+</section>
+
+<section class="card solar-summary-card">
+    <div class="section-title">
+        <div>
+            <p class="eyebrow">SOLAR ANALYSIS</p>
+            <h2>@(d.Solar.EffectiveStartDate is null ? "Solar start not detected" : $"Since solar · {d.Solar.EffectiveStartDate:dd MMM yyyy}")</h2>
+            <p>@d.Solar.Confidence · @d.Solar.DetectionMethod</p>
+        </div>
+        <form method="post" asp-page-handler="SolarOverride" class="inline-form"><input type="date" name="solarDate" value="@d.Solar.ManualOverrideDate?.ToString("yyyy-MM-dd")"/><button>Save override</button><button name="solarDate" value="">Automatic</button></form>
+    </div>
+    <div class="solar-kpis with-savings">
+        <div class="solar-savings-kpi"><span>Estimated savings since solar</span><b>@(d.SolarSavings.HasData ? WebDashboardService.Money(d.SolarSavings.SavingsGbp!.Value) : "—")</b><small>@(d.SolarSavings.HasData ? $"{d.SolarSavings.CompleteDays} complete days · same-month peak/off-peak usage repriced at actual effective tariff rates" : "insufficient comparable history")</small></div>
+        <div><span>Import change</span><b>@(solarImport is null ? "—" : WebDashboardService.Signed(solarImport.Difference, solarImport.Unit))</b><small>@(solarImport?.PercentageChange is null ? "" : $"{solarImport.PercentageChange:+0.0;-0.0;0.0}%")</small></div>
+        <div><span>Export change</span><b>@(solarExport is null ? "—" : WebDashboardService.Signed(solarExport.Difference, solarExport.Unit))</b><small>@(solarExport?.PercentageChange is null ? "" : $"{solarExport.PercentageChange:+0.0;-0.0;0.0}%")</small></div>
+        <div><span>Net electricity</span><b>@(solarNet is null ? "—" : WebDashboardService.Signed(solarNet.Difference, solarNet.Unit))</b><small>average monthly change</small></div>
+        <div><span>Combined utility</span><b>@(solarCombined is null ? "—" : WebDashboardService.Signed(solarCombined.Difference, solarCombined.Unit))</b><small>average monthly change</small></div>
+    </div>
+    <details class="embedded-details">
+        <summary>Full solar analysis</summary>
+        <div class="comparison-periods"><span>Before: @(d.SolarAnalysis.BaselinePeriod.HasData ? $"{d.SolarAnalysis.BaselinePeriod.From:MMM yyyy} – {d.SolarAnalysis.BaselinePeriod.To:MMM yyyy}" : "insufficient data")</span><span>After: @(d.SolarAnalysis.SolarPeriod.HasData ? $"{d.SolarAnalysis.SolarPeriod.From:MMM yyyy} – {d.SolarAnalysis.SolarPeriod.To:MMM yyyy}" : "insufficient data")</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Difference</th><th>Change</th></tr></thead><tbody>@foreach (var row in d.SolarAnalysis.Metrics) { <tr><td>@row.Metric</td><td>@WebDashboardService.Signed(row.Before, row.Unit).TrimStart('+')</td><td>@WebDashboardService.Signed(row.After, row.Unit).TrimStart('+')</td><td>@WebDashboardService.Signed(row.Difference, row.Unit)</td><td>@(row.PercentageChange is null ? "—" : $"{row.PercentageChange:+0.0;-0.0;0.0}%")</td></tr> }</tbody></table></div>
+        <h3>Same-month seasonal comparisons</h3>
+        <div class="table-wrap"><table><thead><tr><th>Comparison</th><th>Import Δ</th><th>Export Δ</th><th>Net grid Δ</th><th>Electricity cost Δ</th><th>Combined Δ</th></tr></thead><tbody>@foreach (var row in d.SolarAnalysis.SameMonthComparisons) { <tr><td>@row.BeforeMonth.ToString("MMM yyyy") vs @row.AfterMonth.ToString("MMM yyyy")</td><td>@WebDashboardService.Signed(row.ImportChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.ExportChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.NetGridChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.NetElectricityCostChangeGbp,"£")</td><td>@WebDashboardService.Signed(row.CombinedUtilityCostChangeGbp,"£")</td></tr> }</tbody></table></div>
+    </details>
+</section>
+
+
+<section class="card explorer-card">
+    <div class="section-title explorer-heading">
+        <div>
+            <p class="eyebrow">EXPLORE HISTORY</p>
+            <h2 id="explorer-title">Energy flow</h2>
+            <p id="explorer-description">Import, export and net grid usage. Hover for values; wheel or pinch to zoom; drag the slider to focus a date range.</p>
+        </div>
+        <div class="explorer-actions">
+            <div class="segmented small" aria-label="Chart metric">
+                <button type="button" data-metric="energy" class="active">Energy</button>
+                <button type="button" data-metric="cost">Cost</button>
+                <button type="button" data-metric="mix">Tariff mix</button>
+            </div>
+            <div class="segmented small" aria-label="Date range">
+                <button type="button" data-range="30d">30D</button>
+                <button type="button" data-range="3m">3M</button>
+                <button type="button" data-range="1y" class="active">1Y</button>
+                <button type="button" data-range="all">All</button>
+            </div>
+            <button type="button" class="secondary-small" data-reset-zoom>Reset zoom</button>
+        </div>
+    </div>
+    <div id="overview-explorer" class="interactive-chart" aria-label="Interactive energy history chart"></div>
+    <p class="chart-help">Legend items can be toggled. Mouse wheel / trackpad zooms; drag inside the chart to pan after zooming.</p>
+</section>
+
+<section class="card explorer-card bill-card">
+    <div class="section-title explorer-heading">
+        <div><p class="eyebrow">ENERGY BILL</p><h2>Energy utility bill</h2><p>Electricity usage + gas usage + optional standing charges. Export income is deducted from the red Energy Cost line. Home events appear as timeline markers.</p></div>
+        <div class="segmented small" aria-label="Standing charge mode">
+            <button type="button" data-standing="included" class="active">Standing included</button>
+            <button type="button" data-standing="excluded">Standing excluded</button>
+        </div>
+    </div>
+    <div id="total-bill-chart" class="interactive-chart bill-interactive-chart" aria-label="Interactive energy utility bill chart"></div>
+    <p class="chart-help">Uses the same Day / Month / Year and date-range controls as Energy flow above.</p>
 </section>
 
 @if (s.SupplierAllocationMonths.Count > 0)
 {
     <section class="card" id="supplier-allocations">
-        <div class="section-title"><div><p class="eyebrow">INTELLIGENT OCTOPUS GO · FOUR-RATE</p><h2>Home and EV import</h2><p>Supplier-calculated estimates for four-rate coverage only, including verified VAT. Partial months start at the agreement transition. Energy costs and weighted rates exclude standing charges. Issued bill charges are separate.</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Period</th><th>Home day</th><th>Home night</th><th>EV peak</th><th>EV off-peak</th><th>Meter import</th><th>Energy cost incl VAT</th><th>Weighted rate</th><th>Reconciled</th></tr></thead><tbody>
-        @foreach (var month in s.SupplierAllocationMonths.OrderByDescending(x => x.Month))
-        {
-            <tr><td>@month.Month</td>
-            @foreach (var band in new[] { "ECO7_DAY", "ECO7_NIGHT", "EV_DEVICE_PEAK", "EV_DEVICE_OFF_PEAK" })
+        <div class="section-title">
+            <div>
+                <p class="eyebrow">INTELLIGENT OCTOPUS GO · FOUR-RATE</p>
+                <h2>Home and EV import</h2>
+                <p>Supplier-calculated allocation, verified against meter import. Energy costs include VAT; standing charges remain separate.</p>
+            </div>
+            <a class="quiet-link" href="/Allocations">Audit evidence →</a>
+        </div>
+        <div id="allocation-mix-chart" class="allocation-mix-chart" aria-label="Latest home and EV allocation mix"></div>
+        <details class="embedded-details">
+            <summary>Show allocation table</summary>
+            <div class="table-wrap"><table><thead><tr><th>Period</th><th>Home day</th><th>Home night</th><th>EV peak</th><th>EV off-peak</th><th>Meter import</th><th>Energy cost incl VAT</th><th>Weighted rate</th><th>Reconciled</th></tr></thead><tbody>
+            @foreach (var month in s.SupplierAllocationMonths.OrderByDescending(x => x.Month))
             {
-                var value = month.Bands.FirstOrDefault(x => x.Band == band);
-                <td>@(month.Complete ? $"{value?.Kwh ?? 0:N3} kWh" : "Unavailable / partial")<br/><small>@(month.Complete ? WebDashboardService.Money(value?.GrossGbp ?? 0) : "Unavailable / partial")</small></td>
+                <tr><td>@month.Month</td>
+                @foreach (var band in new[] { "ECO7_DAY", "ECO7_NIGHT", "EV_DEVICE_PEAK", "EV_DEVICE_OFF_PEAK" })
+                {
+                    var value = month.Bands.FirstOrDefault(x => x.Band == band);
+                    <td>@(month.Complete ? $"{value?.Kwh ?? 0:N3} kWh" : "Unavailable / partial")<br/><small>@(month.Complete ? WebDashboardService.Money(value?.GrossGbp ?? 0) : "Unavailable / partial")</small></td>
+                }
+                <td>@month.MeterKwh.ToString("N3") kWh</td><td>@(month.Complete ? WebDashboardService.Money(month.GrossGbp) : "Unavailable / partial")</td><td>@(month.WeightedRatePence is decimal rate ? $"{rate:N3} p/kWh" : "—")</td><td>@month.Reconciled / @month.Intervals</td></tr>
             }
-            <td>@month.MeterKwh.ToString("N3") kWh</td><td>@(month.Complete ? WebDashboardService.Money(month.GrossGbp) : "Unavailable / partial")</td><td>@(month.WeightedRatePence is decimal rate ? $"{rate:N3} p/kWh" : "—")</td><td>@month.Reconciled / @month.Intervals</td></tr>
-        }
-        </tbody></table></div>
-        <p><a href="/Allocations">Allocation audit and issued-bill evidence →</a></p>
+            </tbody></table></div>
+        </details>
     </section>
 }
 
-<section class="card solar-card">
-    <div class="section-title"><div><p class="eyebrow">SOLAR ANALYSIS</p><h2>@(d.Solar.EffectiveStartDate is null ? "Solar start not detected" : $"Solar start · {d.Solar.EffectiveStartDate:dd MMM yyyy}")</h2><p>@d.Solar.Confidence · @d.Solar.DetectionMethod</p></div><form method="post" asp-page-handler="SolarOverride" class="inline-form"><input type="date" name="solarDate" value="@d.Solar.ManualOverrideDate?.ToString("yyyy-MM-dd")"/><button>Save override</button><button name="solarDate" value="">Automatic</button></form></div>
-    <div class="comparison-periods"><span>Before: @(d.SolarAnalysis.BaselinePeriod.HasData ? $"{d.SolarAnalysis.BaselinePeriod.From:MMM yyyy} – {d.SolarAnalysis.BaselinePeriod.To:MMM yyyy}" : "insufficient data")</span><span>After: @(d.SolarAnalysis.SolarPeriod.HasData ? $"{d.SolarAnalysis.SolarPeriod.From:MMM yyyy} – {d.SolarAnalysis.SolarPeriod.To:MMM yyyy}" : "insufficient data")</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Difference</th><th>Change</th></tr></thead><tbody>@foreach (var row in d.SolarAnalysis.Metrics) { <tr><td>@row.Metric</td><td>@WebDashboardService.Signed(row.Before, row.Unit).TrimStart('+')</td><td>@WebDashboardService.Signed(row.After, row.Unit).TrimStart('+')</td><td>@WebDashboardService.Signed(row.Difference, row.Unit)</td><td>@(row.PercentageChange is null ? "—" : $"{row.PercentageChange:+0.0;-0.0;0.0}%")</td></tr> }</tbody></table></div>
-    <h3>Same-month seasonal comparisons</h3>
-    <div class="table-wrap"><table><thead><tr><th>Comparison</th><th>Import Δ</th><th>Export Δ</th><th>Net grid Δ</th><th>Electricity cost Δ</th><th>Combined Δ</th></tr></thead><tbody>@foreach (var row in d.SolarAnalysis.SameMonthComparisons) { <tr><td>@row.BeforeMonth.ToString("MMM yyyy") vs @row.AfterMonth.ToString("MMM yyyy")</td><td>@WebDashboardService.Signed(row.ImportChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.ExportChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.NetGridChangeKwh,"kWh")</td><td>@WebDashboardService.Signed(row.NetElectricityCostChangeGbp,"£")</td><td>@WebDashboardService.Signed(row.CombinedUtilityCostChangeGbp,"£")</td></tr> }</tbody></table></div>
-</section>
 
-<section class="chart-grid">
-    <article class="card"><div class="section-title"><div><h2>Monthly electricity cost</h2><p>Import, export income and resulting net cost</p></div></div><canvas class="energy-chart" data-chart="monthly-cost"></canvas><script type="application/json" id="monthly-cost">@Html.Raw(Model.MonthlyCostChart)</script></article>
-    <article class="card"><div class="section-title"><div><h2>Monthly electricity flows</h2><p>Grid import and export</p></div></div><canvas class="energy-chart" data-chart="monthly-electricity"></canvas><script type="application/json" id="monthly-electricity">@Html.Raw(Model.MonthlyElectricityChart)</script></article>
-    <article class="card"><div class="section-title"><div><h2>Monthly gas</h2><p>Usage history</p></div></div><canvas class="energy-chart" data-chart="monthly-gas"></canvas><script type="application/json" id="monthly-gas">@Html.Raw(Model.MonthlyGasChart)</script></article>
-    <article class="card"><div class="section-title"><div><h2>Daily electricity flows</h2><p>Last 365 available days</p></div></div><canvas class="energy-chart" data-chart="daily-electricity"></canvas><script type="application/json" id="daily-electricity">@Html.Raw(Model.DailyElectricityChart)</script></article>
-</section>
+<details class="card collapsible-card">
+    <summary><span><strong>History table</strong><small>Monthly trusted rollups and exact cost state</small></span><span>Expand</span></summary>
+    <div class="table-wrap tall"><table><thead><tr><th>Month</th><th>Import</th><th>Export</th><th>Net grid</th><th>Peak</th><th>Off-peak</th><th>Import cost</th><th>Export income</th><th>Net electricity</th><th>Gas</th><th>Gas cost</th><th>Combined</th></tr></thead><tbody>@foreach (var row in d.Monthly.OrderByDescending(x => x.Month)) { <tr><td>@row.Month.ToString("MMM yyyy")</td><td>@row.ImportKwh.ToString("N2")</td><td>@row.ExportKwh.ToString("N2")</td><td>@row.NetGridKwh.ToString("N2")</td><td>@row.PeakImportKwh.ToString("N2")</td><td>@row.OffPeakImportKwh.ToString("N2")</td><td>@(row.ImportCostExact ? WebDashboardService.Money(row.ImportCostGbp) : "—")</td><td>@(row.ExportIncomeExact ? WebDashboardService.Money(row.ExportIncomeGbp) : "—")</td><td>@(row.NetElectricityCostExact ? WebDashboardService.Money(row.NetElectricityCostGbp) : "—")</td><td>@row.GasKwh.ToString("N2")</td><td>@(row.GasCostExact ? WebDashboardService.Money(row.GasCostGbp) : "—")</td><td>@(row.CombinedUtilityCostExact ? WebDashboardService.Money(row.CombinedUtilityCostGbp) : "—")</td></tr> }</tbody></table></div>
+</details>
 
-<section class="card"><div class="section-title"><div><h2>Monthly history</h2><p>Stored meter readings, legacy tariff calculations and four-rate supplier estimates</p></div></div><div class="table-wrap tall"><table><thead><tr><th>Month</th><th>Import</th><th>Export</th><th>Net grid</th><th>Peak</th><th>Off-peak</th><th>Import cost</th><th>Export income</th><th>Net electricity</th><th>Gas</th><th>Gas cost</th><th>Combined</th></tr></thead><tbody>@foreach (var row in d.Monthly.OrderByDescending(x => x.Month)) { <tr><td>@row.Month.ToString("MMM yyyy")</td><td>@row.ImportKwh.ToString("N2")</td><td>@row.ExportKwh.ToString("N2")</td><td>@row.NetGridKwh.ToString("N2")</td><td>@row.PeakImportKwh.ToString("N2")</td><td>@row.OffPeakImportKwh.ToString("N2")</td><td>@(row.ImportCostExact ? WebDashboardService.Money(row.ImportCostGbp) : "—")</td><td>@(row.ExportIncomeExact ? WebDashboardService.Money(row.ExportIncomeGbp) : "—")</td><td>@(row.NetElectricityCostExact ? WebDashboardService.Money(row.NetElectricityCostGbp) : "—")</td><td>@row.GasKwh.ToString("N2")</td><td>@(row.GasCostExact ? WebDashboardService.Money(row.GasCostGbp) : "—")</td><td>@(row.CombinedUtilityCostExact ? WebDashboardService.Money(row.CombinedUtilityCostGbp) : "—")</td></tr> }</tbody></table></div></section>
+<details class="card collapsible-card connector-details" open="@(!connectorsHealthy)">
+    <summary><span><strong>Connector health</strong><small>@(connectorsHealthy ? "All Octopus connectors healthy" : "Attention required")</small></span><span>Details</span></summary>
+    <div class="table-wrap"><table><thead><tr><th>Connector</th><th>Status</th><th>Completed</th><th>Records</th><th>Message</th></tr></thead><tbody>
+    @foreach (var status in octopusStatuses.OrderBy(x => x.Source))
+    {
+        <tr><td>@status.Source</td><td>@(status.Succeeded == true ? "OK" : status.Succeeded == false ? "Failed" : "Running")</td><td>@status.CompletedAt?.LocalDateTime.ToString("g")</td><td>@status.RecordsImported.ToString("N0")</td><td class="message-cell">@status.Message</td></tr>
+    }
+    </tbody></table></div>
+</details>
 
-<section class="card sync-foot"><span class="ok">✓</span><div><strong>Sync detail</strong><p>@s.SyncStatus?.RecordsImported.ToString("N0") readings · @s.SyncStatus?.Message</p></div></section>
-
-
-
-
+<script type="application/json" id="overview-explorer-data">@Html.Raw(Model.OverviewExplorerJson)</script>

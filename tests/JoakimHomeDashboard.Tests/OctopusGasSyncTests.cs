@@ -15,16 +15,21 @@ public sealed class OctopusGasSyncTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-gas-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
-            await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true); await repository.SetSettingAsync("octopus.gasMprn", "1234567890");
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
+            await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true); await repository.SetSettingAsync("octopus.gasMprn", "MPRN-DEMO");
             await repository.SetSettingAsync("octopus.gasMeterSerial", "GAS123"); await repository.SetSettingAsync("octopus.gasProductCode", "FLEX-26-01");
             await repository.SetSettingAsync("octopus.gasTariffCode", "G-1R-FLEX-26-01-A"); await repository.SetSettingAsync("octopus.gasReadingsInCubicMetres", "False");
             using var client = new HttpClient(new OctopusFixtureHandler()); var connector = new OctopusEnergyDataSource(repository, repository, repository, client);
             var result = await connector.SyncAsync(CancellationToken.None); Assert.True(result.Succeeded, result.Message); Assert.Equal(1, result.RecordsImported);
             await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()); await connection.OpenAsync();
-            await using var command = connection.CreateCommand(); command.CommandText = "SELECT quantity_kwh,cost_gbp,standing_charge_gbp,tariff_code,source,flow_type FROM energy_records";
-            await using var reader = await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(1.5m, reader.GetDecimal(0)); Assert.Equal(0.72m, reader.GetDecimal(1));
-            Assert.Equal(0.30m, reader.GetDecimal(2)); Assert.Equal("G-1R-FLEX-26-01-A", reader.GetString(3)); Assert.Equal("Octopus", reader.GetString(4)); Assert.Equal((int)EnergyFlowType.Gas, reader.GetInt32(5));
+            await using var command = connection.CreateCommand(); command.CommandText = "SELECT quantity_kwh,cost_gbp,standing_charge_gbp,tariff_code,source,flow_type FROM energy_records WHERE flow_type=@flow";
+            command.Parameters.AddWithValue("@flow",(int)EnergyFlowType.Gas);
+            await using var reader = await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(1.5m, reader.GetDecimal(0)); Assert.Equal(0.42m, reader.GetDecimal(1));
+            Assert.Equal(0m, reader.GetDecimal(2)); Assert.Equal("G-1R-FLEX-26-01-A", reader.GetString(3)); Assert.Equal("Octopus", reader.GetString(4)); Assert.Equal((int)EnergyFlowType.Gas, reader.GetInt32(5));
+            await reader.DisposeAsync(); command.Parameters.Clear(); command.CommandText="SELECT COALESCE(SUM(standing_charge_gbp),0) FROM energy_records WHERE flow_type=@flow"; command.Parameters.AddWithValue("@flow",(int)EnergyFlowType.SiteConsumption);
+            Assert.Equal(0.30m,decimal.Round(Convert.ToDecimal(await command.ExecuteScalarAsync()),8));
+            var dashboard=await repository.GetEnergyDashboardAsync(); var day=Assert.Single(dashboard.Daily,x=>x.Period==new DateOnly(2026,6,18));
+            Assert.Equal(0.42m,day.GasCost); Assert.Equal(0.30m,day.StandingChargeGbp); Assert.Equal(0.72m,day.GasCost+day.StandingChargeGbp);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
@@ -36,13 +41,13 @@ public sealed class OctopusGasSyncTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-multigas-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
             var meters = new[]
             {
-                new JoakimHomeDashboard.Application.OctopusMeterPoint("A-TEST", 1, "gas", false, "1234567890", "GAS1", "G-1R-FLEX-26-01-A", "FLEX-26-01", null, null),
-                new JoakimHomeDashboard.Application.OctopusMeterPoint("A-TEST", 1, "gas", false, "1234567890", "GAS2", "G-1R-FLEX-26-01-A", "FLEX-26-01", null, null)
+                new JoakimHomeDashboard.Application.OctopusMeterPoint("ACCOUNT-TEST", 1, "gas", false, "MPRN-DEMO", "GAS1", "G-1R-FLEX-26-01-A", "FLEX-26-01", null, null),
+                new JoakimHomeDashboard.Application.OctopusMeterPoint("ACCOUNT-TEST", 1, "gas", false, "MPRN-DEMO", "GAS2", "G-1R-FLEX-26-01-A", "FLEX-26-01", null, null)
             };
-            await repository.ReplaceOctopusConfigurationAsync(new("A-TEST", 1, meters, []));
+            await repository.ReplaceOctopusConfigurationAsync(new("ACCOUNT-TEST", 1, meters, []));
             using var client = new HttpClient(new OctopusFixtureHandler()); var connector = new OctopusEnergyDataSource(repository, repository, repository, client); var result = await connector.SyncAsync(CancellationToken.None);
             Assert.True(result.Succeeded, result.Message);
             await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()); await connection.OpenAsync();
@@ -52,7 +57,11 @@ public sealed class OctopusGasSyncTests
                 WHERE flow_type=@flow AND period_start>=@start AND period_start<@end
                 """;
             command.Parameters.AddWithValue("@flow", (int)EnergyFlowType.Gas); command.Parameters.AddWithValue("@start", "2026-06-18T00:00:00.0000000Z"); command.Parameters.AddWithValue("@end", "2026-06-19T00:00:00.0000000Z");
-            await using var reader = await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(3m, reader.GetDecimal(0)); Assert.Equal(1.14m, reader.GetDecimal(1));
+            await using var reader = await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(3m, reader.GetDecimal(0)); Assert.Equal(0.84m, reader.GetDecimal(1));
+            await reader.DisposeAsync(); command.Parameters.Clear(); command.CommandText="SELECT COALESCE(SUM(cost_gbp),0) FROM octopus_standing_charges WHERE date='2026-06-18'";
+            Assert.Equal(0.30m,decimal.Round(Convert.ToDecimal(await command.ExecuteScalarAsync()),8));
+            var dashboard=await repository.GetEnergyDashboardAsync(); var day=Assert.Single(dashboard.Daily,x=>x.Period==new DateOnly(2026,6,18));
+            Assert.Equal(0.30m,day.StandingChargeGbp); Assert.Equal(1.14m,day.GasCost+day.StandingChargeGbp);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }

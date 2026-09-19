@@ -1,18 +1,24 @@
-# Trusted-network/backend example. Replace OCTOPUS_HOST_IP and the example hostname.
-# For untrusted access, place authenticated TLS termination in front of this listener.
+# Copy to /etc/nginx/sites-available/octopus-energy-dashboard and edit server_name.
+# The application itself listens only on 127.0.0.1:8080.
 
 server {
-    listen OCTOPUS_HOST_IP:80 default_server;
-    server_name octopus.example.internal OCTOPUS_HOST_IP;
+    listen 80;
+    server_name energy.example.internal;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_hide_header X-Frame-Options;
-        add_header Content-Security-Policy "frame-ancestors 'self' http://HOME_ASSISTANT_HOST:8123" always;
     }
 }
 
+# Home Assistant iframe embedding is intentionally NOT enabled by default.
+# If you need it, add a narrowly scoped Content-Security-Policy frame-ancestors
+# directive for your exact Home Assistant origin.
+#
+# The app has a built-in local administrator login, but use HTTPS before
+# exposing it beyond a trusted private network. Authentication is not a
+# substitute for transport security.

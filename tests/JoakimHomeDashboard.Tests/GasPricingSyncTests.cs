@@ -20,6 +20,9 @@ public sealed class GasPricingSyncTests
         Assert.Equal(.28m, await f.Standing());
         Assert.Equal(before, await f.Raw());
         Assert.Equal(new decimal?[] { .14m, .18m, .77m }, (await f.Repository.GetOctopusIntervalsAsync(new(2026, 9, 14))).Select(r => r.CostGbp));
+        var dashboard = await f.Repository.GetEnergyDashboardAsync();
+        Assert.True(Assert.Single(dashboard.Monthly).GasCostExact);
+        Assert.DoesNotContain(dashboard.Warnings, w => w.Contains("exact Octopus tariff coverage is incomplete", StringComparison.OrdinalIgnoreCase));
         Assert.All(f.Handler.Dates, d => Assert.Equal("2026-09-14", d));
         Assert.Equal(0, (await f.Importer.SyncAsync()).RecordsImported);
         Assert.Equal(before, await f.Raw());
@@ -34,6 +37,28 @@ public sealed class GasPricingSyncTests
         Assert.False((await f.Importer.SyncAsync()).Succeeded);
         Assert.Equal(before, await f.Raw());
         Assert.Equal(new decimal?[] { null, null, .77m }, (await f.Repository.GetOctopusIntervalsAsync(new(2026, 9, 14))).Select(r => r.CostGbp));
+    }
+
+    [Fact]
+    public async Task ReusesTariffRatePagesAcrossUnpricedDaysWhileKeepingPaymentEvidenceDated()
+    {
+        using var f = await Fixture.Create();
+        var next = DateTimeOffset.Parse("2026-09-15T00:00:00+01:00");
+        var outsideAgreement = DateTimeOffset.Parse("2026-09-10T00:00:00+01:00");
+        await f.Repository.UpsertOctopusRawReadingsAsync([
+            new(outsideAgreement,outsideAgreement.AddMinutes(30),EnergyFlowType.Gas,1,null,"GAS-DEMO","SERIAL-DEMO","UNKNOWN","synthetic-outside-agreement"),
+            new(next,next.AddMinutes(30),EnergyFlowType.Gas,1,null,"GAS-DEMO","SERIAL-DEMO","NEW","synthetic-next-0"),
+            new(next.AddMinutes(30),next.AddHours(1),EnergyFlowType.Gas,1,null,"GAS-DEMO","SERIAL-DEMO","NEW","synthetic-next-1")
+        ]);
+
+        var result = await f.Importer.SyncAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(4, result.RecordsImported);
+        Assert.Equal(["2026-09-14","2026-09-15"], f.Handler.Dates.Distinct().Order().ToArray());
+        Assert.DoesNotContain("2026-09-10", f.Handler.Dates);
+        Assert.Equal(2, f.Handler.ProductRequests);
+        Assert.Equal(4, f.Handler.RatePageRequests);
     }
 
     [Fact]
@@ -63,7 +88,7 @@ public sealed class GasPricingSyncTests
         private HttpClient Http = null!;
         public static async Task<Fixture> Create()
         {
-            var f = new Fixture(); f.Repository = new(f.Path); await f.Repository.InitializeAsync();
+            var f = new Fixture(); f.Repository = new(f.Path, new TestSecretProtector()); await f.Repository.InitializeAsync();
             await f.Repository.SetSettingAsync("octopus.apiKey", "synthetic-test-key");
             var start = DateTimeOffset.Parse("2026-09-14T00:00:00+01:00");
             await f.Repository.ReplaceOctopusConfigurationAsync(new("DEMO", 1, [], [], [
@@ -84,6 +109,8 @@ public sealed class GasPricingSyncTests
     {
         public bool Dd=true;
         public List<string> Dates=[];
+        public int ProductRequests;
+        public int RatePageRequests;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             string json;
@@ -98,13 +125,18 @@ public sealed class GasPricingSyncTests
                 var code=request.RequestUri!.AbsolutePath.Contains("/OLD/")?"OLD":"NEW";
                 if(request.RequestUri.AbsolutePath.EndsWith("rates/") || request.RequestUri.AbsolutePath.EndsWith("standing/"))
                 {
+                    RatePageRequests++;
                     var from=code=="OLD"?"2026-09-13T23:00:00Z":"2026-09-13T23:30:00Z";var to=code=="OLD"?"2026-09-13T23:30:00Z":"2026-09-15T00:00:00Z";
                     var isStanding=request.RequestUri.AbsolutePath.EndsWith("standing/");
                     var rows=new List<object>{new{valid_from=from,valid_to=to,value_inc_vat=isStanding?35:12,payment_method="NON_DIRECT_DEBIT"}};
                     if(Dd)rows.Add(new{valid_from=from,valid_to=to,value_inc_vat=isStanding?28:code=="OLD"?7:9,payment_method="DIRECT_DEBIT"});
                     json=JsonSerializer.Serialize(new{results=rows,next=(string?)null});
                 }
-                else json=JsonSerializer.Serialize(new{gas_tariffs=new{region=new{direct_debit_monthly=new{code,links=new[]{new{method="GET",rel="standard_unit_rates",href=$"https://api.octopus.energy/v1/products/{code}/rates/"},new{method="GET",rel="standing_charges",href=$"https://api.octopus.energy/v1/products/{code}/standing/"}}}}}});
+                else
+                {
+                    ProductRequests++;
+                    json=JsonSerializer.Serialize(new{gas_tariffs=new{region=new{direct_debit_monthly=new{code,links=new[]{new{method="GET",rel="standard_unit_rates",href=$"https://api.octopus.energy/v1/products/{code}/rates/"},new{method="GET",rel="standing_charges",href=$"https://api.octopus.energy/v1/products/{code}/standing/"}}}}}});
+                }
             }
             return new(HttpStatusCode.OK){Content=new StringContent(json)};
         }

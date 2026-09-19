@@ -13,8 +13,8 @@ public sealed class OctopusIncrementalSyncTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-incremental-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
-            await repository.SetSettingAsync("octopus.mpan", "1000000000001"); await repository.SetSettingAsync("octopus.meterSerial", "IMP1");
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
+            await repository.SetSettingAsync("octopus.mpan", "MPAN-DEMO-IMPORT"); await repository.SetSettingAsync("octopus.meterSerial", "IMP1");
             var handler = new CursorHandler(); using var client = new HttpClient(handler); var connector = new OctopusEnergyDataSource(repository, repository, repository, client);
             var first = await connector.SyncAsync(CancellationToken.None); var second = await connector.SyncAsync(CancellationToken.None);
             Assert.Equal(1, first.RecordsImported); Assert.Equal(0, second.RecordsImported); Assert.Equal(2, handler.PeriodFrom.Count);

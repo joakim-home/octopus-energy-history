@@ -59,7 +59,7 @@ public sealed class EnergyDataQualityTests
         var path=Path.Combine(Path.GetTempPath(),$"joakim-solar-validation-{Guid.NewGuid():N}.db");
         try
         {
-            var repository=new JoakimHomeDashboard.Infrastructure.SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository=new JoakimHomeDashboard.Infrastructure.SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var meter=new OctopusMeterPoint("A",1,"electricity",true,"EXP","E1","E-1R-OUTGOING-A","OUTGOING",null,null); await repository.ReplaceOctopusConfigurationAsync(new("A",1,[meter],[]));
             var before=DateTimeOffset.Parse("2026-01-01T00:00:00Z"); var after=DateTimeOffset.Parse("2026-02-01T00:00:00Z");
             var readings=new List<OctopusRawReading> { new(before,before.AddMinutes(30),EnergyFlowType.ElectricityExport,10m,-1m,"EXP","E1",meter.TariffCode,"isolated-before") };
@@ -77,7 +77,7 @@ public sealed class EnergyDataQualityTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-net-export-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var importMeter = new OctopusMeterPoint("A", 1, "electricity", false, "IMP", "I1", "E-1R-INTELLI-GO-A", "INTELLI-GO", null, null);
             var exportMeter = new OctopusMeterPoint("A", 1, "electricity", true, "EXP", "E1", "E-1R-OUTGOING-A", "OUTGOING", null, null);
             await repository.ReplaceOctopusConfigurationAsync(new("A", 1, [importMeter, exportMeter], []));
@@ -136,7 +136,7 @@ public sealed class EnergyDataQualityTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-impossible-export-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var exportMeter = new OctopusMeterPoint("A", 1, "electricity", true, "EXP", "E1", "EXPORT", "P", null, null);
             await repository.ReplaceOctopusConfigurationAsync(new("A", 1, [exportMeter], []));
             await repository.SetSettingAsync("energy.solarCapacityKwp", "5.76");
@@ -167,7 +167,7 @@ public sealed class EnergyDataQualityTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-reporting-grace-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var today = DateOnly.FromDateTime(DateTime.Now);
             var window = OctopusReportingCompleteness.RecentExpectedWindow(today);
             var importMeter = new OctopusMeterPoint("A", 1, "electricity", false, "IMP", "I1", "IMPORT", "P", null, null);
@@ -197,7 +197,7 @@ public sealed class EnergyDataQualityTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-older-gap-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var today = DateOnly.FromDateTime(DateTime.Now);
             var window = OctopusReportingCompleteness.RecentExpectedWindow(today);
             var missingDate = window.From.AddDays(10);

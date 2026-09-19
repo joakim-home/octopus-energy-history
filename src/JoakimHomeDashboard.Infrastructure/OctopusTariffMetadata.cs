@@ -20,7 +20,7 @@ public sealed record OctopusTariffMetadata(OctopusProductSemantics Semantics, IR
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        var groups = new[] { "four_rate_ev_electricity_tariffs", "dual_register_electricity_tariffs", "single_register_electricity_tariffs", "gas_tariffs" };
+        var groups = new[] { "four_rate_ev_electricity_tariffs", "dual_register_electricity_tariffs", "single_register_electricity_tariffs", "single_register_gas_tariffs", "gas_tariffs" };
         foreach (var group in groups)
         {
             if (!root.TryGetProperty(group, out var regions) || regions.ValueKind != JsonValueKind.Object) continue;

@@ -5,13 +5,8 @@ namespace JoakimHomeDashboard.Application;
 public interface IDashboardRepository
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
-    Task SeedSampleDataAsync(CancellationToken cancellationToken = default);
-    Task<DashboardSnapshot> GetDashboardAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<Account>> GetAccountsAsync(CancellationToken cancellationToken = default);
-    Task AddAccountAsync(string name, AccountType type, string provider, decimal balance, CancellationToken cancellationToken = default);
     Task SetSettingAsync(string key, string value, bool isSecret = false, CancellationToken cancellationToken = default);
     Task<string?> GetSettingAsync(string key, CancellationToken cancellationToken = default);
-    Task UpsertDailyEnergyAsync(IReadOnlyCollection<DailyEnergyReading> readings, CancellationToken cancellationToken = default);
     Task RecordSyncResultAsync(SyncResult result, DateTimeOffset startedAt, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProviderSyncStatus>> GetSyncStatusesAsync(CancellationToken cancellationToken = default);
     Task<EnergyDashboardSnapshot> GetEnergyDashboardAsync(CancellationToken cancellationToken = default);
@@ -41,24 +36,15 @@ public interface ISyncCoordinator
 }
 
 public sealed record OctopusSettingsInput(string? ApiKey, string Mpan, string MeterSerial, string ExportMpan, string ExportMeterSerial, string ExportProductCode, string ExportTariffCode, string AccountCode, string ProductCode, string TariffCode, string GasMprn, string GasMeterSerial, string GasProductCode, string GasTariffCode, bool GasReadingsInCubicMetres, decimal SolarCapacityKwp = 5.76m);
-public sealed record EnphaseSettingsInput(string ClientId, string? ClientSecret, string? ApiKey, string RedirectUri);
 public sealed record ProviderSettingsSnapshot(
     string OctopusMpan, string OctopusMeterSerial, string OctopusExportMpan, string OctopusExportMeterSerial, string OctopusExportProductCode, string OctopusExportTariffCode,
     string OctopusAccountCode, string OctopusProductCode, string OctopusTariffCode, string OctopusGasMprn, string OctopusGasMeterSerial,
-    string OctopusGasProductCode, string OctopusGasTariffCode, bool OctopusGasReadingsInCubicMetres, decimal SolarCapacityKwp, bool HasOctopusApiKey,
-    string EnphaseClientId, string EnphaseRedirectUri, string EnphaseSystemId, bool HasEnphaseClientSecret,
-    bool HasEnphaseApiKey, bool IsEnphaseAuthorized);
+    string OctopusGasProductCode, string OctopusGasTariffCode, bool OctopusGasReadingsInCubicMetres, decimal SolarCapacityKwp, bool HasOctopusApiKey);
 
 public interface IProviderSettingsService
 {
     Task<ProviderSettingsSnapshot> LoadAsync(CancellationToken cancellationToken = default);
     Task SaveOctopusAsync(OctopusSettingsInput settings, CancellationToken cancellationToken = default);
-    Task SaveEnphaseAsync(EnphaseSettingsInput settings, CancellationToken cancellationToken = default);
-}
-
-public interface IEnphaseAuthorizationService
-{
-    Task<ConnectionTestResult> AuthorizeAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record OctopusGasDiscovery(string Mprn, string MeterSerial, string ProductCode, string TariffCode);
@@ -81,6 +67,7 @@ public interface IOctopusReadingStore
     Task<IReadOnlyList<OctopusRawReading>> InsertMissingOctopusRawReadingsAsync(IReadOnlyCollection<OctopusRawReading> readings, CancellationToken cancellationToken = default);
     Task UpsertOctopusStandingChargesAsync(IReadOnlyCollection<OctopusStandingCharge> charges, CancellationToken cancellationToken = default);
     Task InsertMissingOctopusStandingChargesAsync(IReadOnlyCollection<OctopusStandingCharge> charges, CancellationToken cancellationToken = default);
+    Task<DateOnly?> GetLatestOctopusStandingChargeDateAsync(string meterPoint, string tariffCode, CancellationToken cancellationToken = default);
     Task RebuildOctopusRollupsAsync(CancellationToken cancellationToken = default);
 }
 public interface IHomeEventStore
@@ -89,36 +76,9 @@ public interface IHomeEventStore
     Task SaveHomeEventAsync(HomeEvent homeEvent, CancellationToken cancellationToken = default);
     Task DeleteHomeEventAsync(long id, CancellationToken cancellationToken = default);
 }
-public interface IUserPreferences
-{
-    Task<EnergyViewMode> GetEnergyViewModeAsync(CancellationToken cancellationToken = default);
-    Task SetEnergyViewModeAsync(EnergyViewMode mode, CancellationToken cancellationToken = default);
-    Task<AnalysisChartType> GetYearAnalysisChartTypeAsync(CancellationToken cancellationToken = default);
-    Task SetYearAnalysisChartTypeAsync(AnalysisChartType type, CancellationToken cancellationToken = default);
-    Task<AnalysisChartType> GetMonthlyCostChartTypeAsync(CancellationToken cancellationToken = default);
-    Task SetMonthlyCostChartTypeAsync(AnalysisChartType type, CancellationToken cancellationToken = default);
-    Task<CostColumnMode> GetCostColumnModeAsync(CancellationToken cancellationToken = default);
-    Task SetCostColumnModeAsync(CostColumnMode mode, CancellationToken cancellationToken = default);
-}
 public interface IOctopusDiscoveryService
 {
     Task<OctopusDiscoveryResult> DiscoverAccountAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<OctopusMeterPoint>> GetDiscoveredConfigurationAsync(CancellationToken cancellationToken = default);
 }
 
-public sealed class DashboardService(IDashboardRepository repository)
-{
-    public Task<DashboardSnapshot> LoadAsync(CancellationToken cancellationToken = default) => repository.GetDashboardAsync(cancellationToken);
-    public Task<IReadOnlyList<Account>> GetAccountsAsync(CancellationToken cancellationToken = default) => repository.GetAccountsAsync(cancellationToken);
-    public Task<EnergyDashboardSnapshot> LoadEnergyAsync(CancellationToken cancellationToken = default) => repository.GetEnergyDashboardAsync(cancellationToken);
-    public Task<IReadOnlyList<EnergyIntervalDetail>> LoadIntervalsAsync(DateOnly date, CancellationToken cancellationToken = default) => repository.GetOctopusIntervalsAsync(date, cancellationToken);
-    public Task<SolarAnalysisConfiguration> LoadSolarConfigurationAsync(CancellationToken cancellationToken = default) => repository.GetSolarAnalysisConfigurationAsync(cancellationToken);
-    public Task SetSolarManualOverrideAsync(DateOnly? date, CancellationToken cancellationToken = default) => repository.SetSolarManualOverrideAsync(date, cancellationToken);
-
-    public Task AddAccountAsync(string name, AccountType type, string provider, decimal balance, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Account name is required.", nameof(name));
-        if (string.IsNullOrWhiteSpace(provider)) provider = "Manual";
-        return repository.AddAccountAsync(name.Trim(), type, provider.Trim(), balance, cancellationToken);
-    }
-}

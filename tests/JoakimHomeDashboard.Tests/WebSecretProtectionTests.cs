@@ -22,14 +22,14 @@ public sealed class WebSecretProtectionTests
     }
 
     [Fact]
-    public void FileKeyProtectorRejectsLegacyDpapiEnvelope()
+    public void FileKeyProtectorRejectsInvalidCiphertext()
     {
         var directory = Path.Combine(Path.GetTempPath(), "octopus-secret-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try
         {
             var protector = new FileKeySecretProtector(Path.Combine(directory, "secret.key"));
-            Assert.Throws<CryptographicException>(() => protector.Unprotect("legacy-dpapi-value"));
+            Assert.Throws<CryptographicException>(() => protector.Unprotect("invalid-ciphertext"));
         }
         finally { Directory.Delete(directory, true); }
     }

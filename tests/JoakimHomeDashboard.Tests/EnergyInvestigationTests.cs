@@ -6,27 +6,7 @@ namespace JoakimHomeDashboard.Tests;
 
 public sealed class EnergyInvestigationTests
 {
-    [Fact]
-    public void SpikeDetection_UsesPrecedingThirtyDayAverageForImportAndExport()
-    {
-        var start = new DateOnly(2026, 5, 1);
-        var normal = Enumerable.Range(0, 30).Select(day => new EnergyPeriodPoint(start.AddDays(day), 10m, 2m, 0m)).ToList();
-        normal.Add(new(start.AddDays(30), 31m, 6.1m, 0m));
 
-        var spikes = EnergySpikeDetector.Detect(normal);
-
-        Assert.Contains(spikes, spike => spike.Date == start.AddDays(30) && spike.FlowType == EnergyFlowType.ElectricityImport && spike.RollingAverageKwh == 10m);
-        Assert.Contains(spikes, spike => spike.Date == start.AddDays(30) && spike.FlowType == EnergyFlowType.ElectricityExport && spike.RollingAverageKwh == 2m);
-    }
-
-    [Fact]
-    public void SpikeDetection_DoesNotUseCurrentDayInItsOwnBaseline()
-    {
-        var start = new DateOnly(2026, 5, 1);
-        var points = Enumerable.Range(0, 8).Select(day => new EnergyPeriodPoint(start.AddDays(day), day == 7 ? 40m : 10m, 0m, 0m)).ToArray();
-        var spike = Assert.Single(EnergySpikeDetector.Detect(points));
-        Assert.Equal(4m, spike.Multiple);
-    }
 
     [Fact]
     public void DataQualityWarnings_AreGroupedWithoutDuplicatingBanners()
@@ -54,17 +34,6 @@ public sealed class EnergyInvestigationTests
         Assert.DoesNotContain(missingDays.Warnings, warning => warning.Contains("excluded from export and net calculations", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public void HoverInspection_IncludesDateSeriesUnitDirectionAndRateBand()
-    {
-        var text = ChartPresentation.FormatHover([
-            new(new(2026, 6, 18), "Grid import", 4.125m, "kWh", ImportRateBand.Peak),
-            new(new(2026, 6, 18), "Export", 1.375m, "kWh")]);
-
-        Assert.Contains("18 Jun 2026", text, StringComparison.Ordinal);
-        Assert.Contains("Grid import (peak): 4.125 kWh", text, StringComparison.Ordinal);
-        Assert.Contains("Export: 1.375 kWh", text, StringComparison.Ordinal);
-    }
 
     [Fact]
     public async Task IntervalInspection_ReturnsTrustedHalfHourlyValuesAndClassification()
@@ -72,7 +41,7 @@ public sealed class EnergyInvestigationTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-inspection-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path);
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector());
             await repository.InitializeAsync();
             var start = DateTimeOffset.Parse("2026-06-18T00:00:00Z");
             var meter = new OctopusMeterPoint("A", 1, "electricity", false, "IMP", "I1", "E-1R-INTELLI-GO-A", "INTELLI-GO", null, null);

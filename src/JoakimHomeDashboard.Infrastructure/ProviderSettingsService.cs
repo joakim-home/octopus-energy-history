@@ -12,9 +12,6 @@ internal static class SettingKeys
     public const string OctopusGasMprn = "octopus.gasMprn"; public const string OctopusGasSerial = "octopus.gasMeterSerial"; public const string OctopusGasProduct = "octopus.gasProductCode";
     public const string OctopusGasTariff = "octopus.gasTariffCode"; public const string OctopusGasCubicMetres = "octopus.gasReadingsInCubicMetres";
     public const string SolarCapacityKwp = "energy.solarCapacityKwp";
-    public const string EnphaseClientId = "enphase.clientId"; public const string EnphaseClientSecret = "enphase.clientSecret"; public const string EnphaseApiKey = "enphase.apiKey";
-    public const string EnphaseRedirect = "enphase.redirectUri"; public const string EnphaseSystemId = "enphase.systemId"; public const string EnphaseAccessToken = "enphase.accessToken";
-    public const string EnphaseRefreshToken = "enphase.refreshToken"; public const string EnphaseExpiresAt = "enphase.expiresAt";
 }
 
 public sealed class ProviderSettingsService(IDashboardRepository repository) : IProviderSettingsService
@@ -29,10 +26,7 @@ public sealed class ProviderSettingsService(IDashboardRepository repository) : I
             await Get(SettingKeys.OctopusGasMprn, cancellationToken), await Get(SettingKeys.OctopusGasSerial, cancellationToken), await Get(SettingKeys.OctopusGasProduct, cancellationToken), await Get(SettingKeys.OctopusGasTariff, cancellationToken),
             bool.TryParse(await Get(SettingKeys.OctopusGasCubicMetres, cancellationToken), out var gasCubic) && gasCubic,
             ParseSolarCapacity(await Get(SettingKeys.SolarCapacityKwp, cancellationToken)),
-            !string.IsNullOrWhiteSpace(await Get(SettingKeys.OctopusApiKey, cancellationToken)), await Get(SettingKeys.EnphaseClientId, cancellationToken),
-            await Get(SettingKeys.EnphaseRedirect, cancellationToken) is { Length: > 0 } redirect ? redirect : "http://127.0.0.1:53682/callback/",
-            await Get(SettingKeys.EnphaseSystemId, cancellationToken), !string.IsNullOrWhiteSpace(await Get(SettingKeys.EnphaseClientSecret, cancellationToken)),
-            !string.IsNullOrWhiteSpace(await Get(SettingKeys.EnphaseApiKey, cancellationToken)), !string.IsNullOrWhiteSpace(await Get(SettingKeys.EnphaseRefreshToken, cancellationToken)));
+            !string.IsNullOrWhiteSpace(await Get(SettingKeys.OctopusApiKey, cancellationToken)));
 
     public async Task SaveOctopusAsync(OctopusSettingsInput settings, CancellationToken cancellationToken = default)
     {
@@ -48,16 +42,6 @@ public sealed class ProviderSettingsService(IDashboardRepository repository) : I
         async Task Save(string key, string value) => await repository.SetSettingAsync(key, value.Trim(), false, cancellationToken);
     }
 
-    public async Task SaveEnphaseAsync(EnphaseSettingsInput settings, CancellationToken cancellationToken = default)
-    {
-        if (!Uri.TryCreate(settings.RedirectUri, UriKind.Absolute, out var redirect) || !redirect.IsLoopback || redirect.Scheme != Uri.UriSchemeHttp)
-            throw new ArgumentException("Enphase redirect URI must be an http://localhost or http://127.0.0.1 callback URL.");
-        var normalized = settings.RedirectUri.EndsWith('/') ? settings.RedirectUri : settings.RedirectUri + "/";
-        await repository.SetSettingAsync(SettingKeys.EnphaseClientId, settings.ClientId.Trim(), false, cancellationToken);
-        await repository.SetSettingAsync(SettingKeys.EnphaseRedirect, normalized, false, cancellationToken);
-        if (settings.ClientSecret is { Length: > 0 }) await repository.SetSettingAsync(SettingKeys.EnphaseClientSecret, settings.ClientSecret.Trim(), true, cancellationToken);
-        if (settings.ApiKey is { Length: > 0 }) await repository.SetSettingAsync(SettingKeys.EnphaseApiKey, settings.ApiKey.Trim(), true, cancellationToken);
-    }
 
     private static decimal ParseSolarCapacity(string value)
         => decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var capacity) ? NormalizeSolarCapacity(capacity) : 5.76m;

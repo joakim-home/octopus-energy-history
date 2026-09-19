@@ -1,73 +1,103 @@
-# Octopus Energy History
+# Octopus Energy Dashboard
 
-A self-hosted web dashboard for Octopus electricity import, export and gas history. It keeps meter consumption separate from supplier pricing and makes incomplete coverage visible.
+A self-hosted ASP.NET Core dashboard for detailed Octopus Energy history, tariff-aware costing, export income, gas, standing charges, Intelligent Octopus Go supplier allocations, and solar/battery impact analysis.
 
-This is an independent community project, not an official Octopus Energy application. It is not a billing system. Supplier interval estimates can differ from final issued bills.
+The project is designed for people who want a local, auditable view of their household energy data rather than another cloud dashboard.
 
-## Features
+## Highlights
 
-- Account, meter and agreement discovery using your Octopus API credential.
-- Daily and monthly history, peak/off-peak analysis and year comparisons.
-- Four-rate EV home day/night and EV peak/off-peak allocations from authenticated supplier data.
-- Reconciliation against stored consumption; unavailable allocations never use legacy pricing as a fallback.
-- Separate supplier evidence, revisions and issued bill charges.
-- Manual and daily scheduled sync share the same ingestion path. Allocation sync retries gaps and revisits a three-day overlap for revisions.
+- Local SQLite history with raw supplier readings preserved.
+- Electricity import/export, gas and standing charges in one dashboard.
+- Exact/partial cost state: missing tariff evidence stays unavailable rather than being guessed.
+- Intelligent Octopus Go four-rate allocation using supplier-calculated `gbrCostOfUsage` evidence.
+- Allocation reconciliation against meter import before four-rate costs are trusted.
+- Interactive day/month/year charts with zoom and Home Event markers.
+- Solar-start detection plus same-month before/after analysis.
+- Band-preserving estimated savings since solar, so historic peak-heavy usage is not magically repriced as today's off-peak usage.
+- Year-on-year analysis and data-quality diagnostics.
+- Background incremental sync plus explicit historical allocation backfill.
+- Built-in single-admin login with salted password hashing and login throttling.
 
-## Run locally
+## Quick install
 
-Install the .NET 9 SDK selected by `global.json`, then run from the repository root:
+Target platform: a small Debian/Ubuntu-style Linux host, VM or LXC with systemd.
 
-```sh
+Build from source and install as a locked-down local web service:
+
+```bash
+git clone <your-repository-url>
+cd <repository>
+sudo ./deploy/install.sh
+```
+
+The installer requires the **.NET 9 SDK** to build from source. It publishes a self-contained `linux-x64` application, so the installed service does not require the .NET runtime afterward.
+
+Defaults:
+
+```text
+Application: /opt/octopus-energy-dashboard
+Data/key:    /var/lib/octopus-energy-dashboard
+Service:     octopus-energy-dashboard
+Listen:      http://127.0.0.1:8080
+Timezone:    Europe/London
+```
+
+Then put nginx, Caddy, or another trusted reverse proxy in front of the localhost listener for LAN access.
+
+See [docs/INSTALL.md](docs/INSTALL.md) for full installation, upgrade, reverse-proxy and uninstall instructions.
+## First setup
+
+Open the dashboard through your trusted LAN/reverse-proxy URL.
+
+1. On first run, create the local administrator account. Passwords must be at least 12 characters and are stored only as salted hashes.
+2. Open **Octopus Setup** and enter your Octopus API key.
+3. Select **Discover account**.
+4. Review discovered import/export electricity and gas meter configuration.
+5. Run **Sync now**.
+6. Use Advanced Overrides only if automatic discovery needs help.
+
+The API key is stored in SQLite encrypted with AES-GCM. The random key is stored separately in the configured secret-key file. Back up **both** the database and the key.
+
+## Security
+
+The application includes a single local administrator login by default. Login attempts are rate-limited, and all dashboard/configuration pages require authentication; `/health` remains public for service monitoring. Trusted-LAN installations can explicitly opt out with `OCTOPUS_AUTH_DISABLED=1`.
+
+The default installer still binds Kestrel to `127.0.0.1` only. Use HTTPS at the reverse proxy for remote access, and keep the application behind a trusted network, VPN, or equivalent access boundary.
+
+See [docs/SECURITY.md](docs/SECURITY.md).
+## Four-rate Intelligent Octopus Go
+
+For supported four-rate import periods, the dashboard does not infer EV/home allocation from clock time and does not flatten the four supplier rates across whole-house consumption.
+
+It stores supplier `gbrCostOfUsage` allocation evidence separately, reconciles each interval against the imported meter reading, and only promotes reconciled allocations into the effective cost view.
+
+If allocation evidence is missing or inconsistent, pricing fails closed: usage remains visible but the affected cost is unavailable.
+
+An explicit historical backfill is available:
+
+```bash
+sudo systemctl stop octopus-energy-dashboard
+sudo -u octopus-energy \
+  OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
+  OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
+  /opt/octopus-energy-dashboard/JoakimHomeDashboard.Web --backfill-allocations
+sudo systemctl start octopus-energy-dashboard
+```
+## Development
+
+Requirements: .NET 9 SDK.
+
+```bash
 dotnet restore --configfile NuGet.Config
-dotnet test tests/JoakimHomeDashboard.Tests -c Release
-dotnet run --project src/JoakimHomeDashboard.Web -c Release --no-launch-profile --urls http://127.0.0.1:5086
+dotnet build JoakimHomeDashboard.sln -c Release
+dotnet test JoakimHomeDashboard.sln -c Release
+dotnet run --project src/JoakimHomeDashboard.Web
 ```
 
-Open `http://127.0.0.1:5086`, choose **Octopus Setup**, save your API key, discover your account, and sync. The initial import can take longer than later updates. No real account data or credentials are supplied with the project.
+The executable schema lives in `DatabaseSchema.cs` plus the supplier-allocation schema in `SupplierAllocationStore.cs`.
 
-The supported entry point is the Web project. Shared libraries retain their existing namespace; unused finance and provider types are not a supported product surface. This distribution does not include the desktop application.
+## Project scope
 
-## Storage and hosting
+This is a community/self-hosted project, not an Octopus Energy product. Octopus Energy and related product names are trademarks of their respective owners.
 
-| Environment variable | Purpose |
-| --- | --- |
-| `OCTOPUS_DATA_PATH` | SQLite database; default `data/dashboard.db` under the web content root |
-| `OCTOPUS_SECRET_KEY_PATH` | Host encryption key; default `data/secret.key` under the web content root |
-| `OCTOPUS_DISABLE_SYNC` | Set to `1` to disable background sync |
-| `TZ` | Set to `Europe/London` on Linux for UK calendar grouping |
-
-Use persistent paths outside the published application folder. On Linux, run the app under a dedicated service account and restrict the database/key directory to that account. Back up both the database and its matching key securely. The database contains private readings, account identifiers and supplier evidence. Only saved credential values are encrypted; the database itself is not encrypted, so use appropriate host disk/volume encryption when protection against device loss or offline access is required.
-
-The app has no built-in authentication. Keep it on loopback or a trusted private network. If it is reachable from an untrusted network, put it behind an authenticated reverse proxy with TLS; TLS by itself is not access control. See [security](SECURITY.md).
-
-The files under `deploy/` are deployment-time templates. Replace placeholders such as `OCTOPUS_HOST_IP`, `NETWORK_INTERFACE` and the example hostname before installing them. `deploy/octopus.service` intentionally keeps ASP.NET Core on `127.0.0.1:8080`; expose it through the chosen reverse proxy rather than binding the application directly to an untrusted interface. `OCTOPUS_SECRET_KEY_PATH` contains the path to the host key file, not the key material itself.
-
-For a Linux x64 self-contained build:
-
-```sh
-dotnet publish src/JoakimHomeDashboard.Web -c Release -r linux-x64 --self-contained true -o dist/web
-```
-
-Run the published executable from its output folder with persistent storage variables set. Do not place databases or keys under `wwwroot`.
-
-## Allocation backfill
-
-After account discovery and consumption sync, stop the running app and use the same storage variables:
-
-```sh
-dotnet run --project src/JoakimHomeDashboard.Web -c Release --no-launch-profile -- --backfill-allocations
-```
-
-This imports supplier allocations for stored four-rate consumption. It does not regenerate meter readings. Missing supplier data remains unavailable and produces a nonzero exit code; repeat sync can resolve it when the supplier publishes it.
-
-## Limitations and support
-
-Supplier APIs and publication timing can change. Four-rate account scope must be unambiguous. Unsupported tariffs, absent rates, rejected allocations and missing gas/export pricing remain visible. Energy costs and standing charges are separate; interval estimates are not final bill charges.
-
-Read [the data model](docs/data-model.md) and [troubleshooting](docs/troubleshooting.md). For a bug report, include software version, operating system, sanitized error text and synthetic reproduction steps. Never upload your database, key or unredacted supplier response. Community support has no response-time guarantee.
-
-This project was developed with AI assistance. Contributors and maintainers remain responsible for reviewing changes and test evidence. See [contributing](CONTRIBUTING.md).
-
-Original project code is licensed under [MIT](LICENSE). Dependencies retain their own [licenses](THIRD_PARTY_NOTICES.md).
-
-
+The software is provided as-is, with no guaranteed support. It is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only); see [LICENSE](LICENSE).

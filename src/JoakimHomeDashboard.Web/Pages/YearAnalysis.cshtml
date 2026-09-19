@@ -5,39 +5,72 @@
     ViewData["Page"] = "Year";
     var d = Model.Data;
 }
-<section class="page-head"><div><p class="eyebrow">YEAR ANALYSIS</p><h1>Compare years</h1><p>Annual totals and same-month comparisons from the preserved Octopus history.</p></div></section>
+<section class="page-head">
+    <div>
+        <p class="eyebrow">YEAR ANALYSIS</p>
+        <h1>Compare years</h1>
+        <p>Annual totals and month-for-month comparisons from the preserved Octopus history.</p>
+    </div>
+</section>
 
-<section class="year-summary-grid">
+<section class="year-summary-grid year-summary-grid-v2">
 @foreach (var year in Model.Summaries) {
-    <article class="card year-summary"><h2>@year.Year</h2><div class="summary-metrics">
-        <div><span>Electricity import</span><b>@Format(year.ElectricityImport)</b><small>@Average(year.ElectricityImport)</small></div>
-        <div><span>Electricity export</span><b>@Format(year.ElectricityExport)</b><small>@Average(year.ElectricityExport)</small></div>
-        <div><span>Net grid usage</span><b>@Format(year.NetGridUsage)</b><small>@Average(year.NetGridUsage)</small></div>
-        <div><span>Net electricity cost</span><b>@Format(year.NetElectricityCost)</b><small>@Average(year.NetElectricityCost)</small></div>
-        <div><span>Gas cost</span><b>@Format(year.GasCost)</b><small>@Average(year.GasCost)</small></div>
-        <div><span>Combined utility cost</span><b>@Format(year.CombinedUtilityCost)</b><small>@Average(year.CombinedUtilityCost)</small></div>
-    </div></article>
+    <article class="card year-summary">
+        <h2>@year.Year</h2>
+        <div class="summary-metrics">
+            <div><span>Import</span><b>@Format(year.ElectricityImport)</b><small>@Average(year.ElectricityImport)</small></div>
+            <div><span>Export</span><b>@Format(year.ElectricityExport)</b><small>@Average(year.ElectricityExport)</small></div>
+            <div><span>Net grid</span><b>@Format(year.NetGridUsage)</b><small>@Average(year.NetGridUsage)</small></div>
+            <div><span>Net electricity</span><b>@Format(year.NetElectricityCost)</b><small>@Average(year.NetElectricityCost)</small></div>
+            <div><span>Gas</span><b>@Format(year.GasCost)</b><small>@Average(year.GasCost)</small></div>
+            <div><span>Combined</span><b>@Format(year.CombinedUtilityCost)</b><small>@Average(year.CombinedUtilityCost)</small></div>
+        </div>
+    </article>
 }
 </section>
 
-<section class="chart-grid">
-    <article class="card"><h2>Net electricity cost</h2><p>Month-for-month by year</p><canvas class="energy-chart" data-chart="year-cost"></canvas><script type="application/json" id="year-cost">@Html.Raw(Model.CostChart)</script>@ComparisonTable(Model.CostRows, d.Years, "£")</article>
-    <article class="card"><h2>Net grid usage</h2><p>Import less export</p><canvas class="energy-chart" data-chart="year-usage"></canvas><script type="application/json" id="year-usage">@Html.Raw(Model.UsageChart)</script>@ComparisonTable(Model.UsageRows, d.Years, "kWh")</article>
-    <article class="card"><h2>Gas cost</h2><p>Exact tariff cost where available</p><canvas class="energy-chart" data-chart="year-gas"></canvas><script type="application/json" id="year-gas">@Html.Raw(Model.GasChart)</script>@ComparisonTable(Model.GasRows, d.Years, "£")</article>
-    <article class="card"><h2>Combined utility cost</h2><p>Net electricity plus gas</p><canvas class="energy-chart" data-chart="year-combined"></canvas><script type="application/json" id="year-combined">@Html.Raw(Model.CombinedChart)</script>@ComparisonTable(Model.CombinedRows, d.Years, "£")</article>
+<section class="card explorer-card">
+    <div class="section-title explorer-heading">
+        <div>
+            <p class="eyebrow">MONTH-FOR-MONTH</p>
+            <h2 id="year-explorer-title">Net electricity cost</h2>
+            <p>Toggle years from the legend. Hover for exact values and zoom into a month range if needed.</p>
+        </div>
+        <div class="explorer-actions">
+            <div class="segmented small" aria-label="Year comparison metric">
+                <button type="button" data-year-metric="cost" class="active">Net cost</button>
+                <button type="button" data-year-metric="usage">Grid usage</button>
+                <button type="button" data-year-metric="gas">Gas</button>
+                <button type="button" data-year-metric="combined">Combined</button>
+            </div>
+            <button type="button" class="secondary-small" data-year-reset>Reset zoom</button>
+        </div>
+    </div>
+    <div id="year-explorer" class="interactive-chart year-interactive-chart" aria-label="Interactive year comparison chart"></div>
+    <div class="table-wrap year-explorer-table">
+        <table>
+            <thead><tr><th>Month</th>@foreach (var year in d.Years) { <th>@year</th> }<th>Difference</th><th>Change</th></tr></thead>
+            <tbody id="year-explorer-body"></tbody>
+        </table>
+    </div>
 </section>
 
-<section class="card"><div class="section-title"><div><h2>Home event markers</h2><p>Context annotations only; they never modify source readings or Solar Start.</p></div></div><div class="event-layout"><form method="post" asp-page-handler="AddEvent" class="stack"><input type="date" name="eventDate" required value="@DateTime.Today.ToString("yyyy-MM-dd")"/><input name="eventLabel" required placeholder="e.g. Loft insulation or EV"/><select name="eventCategory">@foreach (var category in HomeEventAnalysis.SupportedCategories) { <option>@category</option> }</select><button class="primary">Save marker</button></form><div class="event-list">@foreach (var item in d.HomeEvents.OrderByDescending(x => x.Date)) { <div><span>@item.Date.ToString("dd MMM yyyy")</span><b>@item.Label</b><small>@item.Category</small><form method="post" asp-page-handler="DeleteEvent"><input type="hidden" name="id" value="@item.Id"/><button class="danger">Delete</button></form></div> }</div></div></section>
+<details class="card collapsible-card">
+    <summary><span><strong>Home event markers</strong><small>Context annotations only; never modify source readings or Solar Start</small></span><span>Manage</span></summary>
+    <div class="event-layout">
+        <form method="post" asp-page-handler="AddEvent" class="stack">
+            <input type="date" name="eventDate" required value="@DateTime.Today.ToString("yyyy-MM-dd")"/>
+            <input name="eventLabel" required placeholder="e.g. Loft insulation or EV"/>
+            <select name="eventCategory">@foreach (var category in HomeEventAnalysis.SupportedCategories) { <option>@category</option> }</select>
+            <button class="primary">Save marker</button>
+        </form>
+        <div class="event-list">@foreach (var item in d.HomeEvents.OrderByDescending(x => x.Date)) { <div><span>@item.Date.ToString("dd MMM yyyy")</span><b>@item.Label</b><small>@item.Category</small><form method="post" asp-page-handler="DeleteEvent"><input type="hidden" name="id" value="@item.Id"/><button class="danger">Delete</button></form></div> }</div>
+    </div>
+</details>
+
+<script type="application/json" id="year-explorer-data">@Html.Raw(Model.YearExplorerJson)</script>
 
 @functions {
     string Format(AnnualAnalysisValue value) => value.Total is null ? "—" : value.Unit == "£" ? WebDashboardService.Money(value.Total.Value) : $"{value.Total:N2} kWh";
     string Average(AnnualAnalysisValue value) => value.MonthlyAverage is null ? "Avg —" : value.Unit == "£" ? $"Avg {WebDashboardService.Money(value.MonthlyAverage.Value)} / month" : $"Avg {value.MonthlyAverage:N2} kWh / month";
-    Microsoft.AspNetCore.Html.IHtmlContent ComparisonTable(IReadOnlyList<YearAnalysisTableRow> rows, IReadOnlyList<int> years, string unit) {
-        var html = new System.Text.StringBuilder("<div class=\"table-wrap compact\"><table><thead><tr><th>Month</th>");
-        foreach (var year in years) html.Append($"<th>{year}</th>");
-        html.Append("<th>Difference</th><th>Change</th></tr></thead><tbody>");
-        foreach (var row in rows) { html.Append($"<tr><td>{new DateOnly(2000,row.Month,1):MMM}</td>"); foreach (var year in years) { var value=row.Values.FirstOrDefault(x=>x.Year==year)?.Value; html.Append($"<td>{Cell(value,unit)}</td>"); } html.Append($"<td>{WebDashboardService.Signed(row.Difference,unit)}</td><td>{(row.PercentageDifference is null ? "—" : $"{row.PercentageDifference:+0.0;-0.0;0.0}%")}</td></tr>"); }
-        html.Append("</tbody></table></div>"); return new Microsoft.AspNetCore.Html.HtmlString(html.ToString());
-    }
-    string Cell(decimal? value,string unit) => value is null ? "—" : unit=="£" ? WebDashboardService.Money(value.Value) : $"{value:N2}";
 }

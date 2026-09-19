@@ -64,39 +64,7 @@ public sealed class YearAnalysisTests
         Assert.Equal([2024, 2026], YearAnalysisBuilder.AvailableYears(monthly));
     }
 
-    [Fact]
-    public void StackedCostColumns_KeepImportAboveAndExportBelowZero()
-    {
-        var monthly = Insights(new EnergyPeriodPoint(
-            new(2026, 5, 1), 10m, 5m, 0m, 3m, 1m, 0m, true, true, false,
-            4m, 6m, 0m, 2m, 1m, true, true));
 
-        var point = Assert.Single(YearAnalysisBuilder.BuildCostColumnPoints(monthly, [2026]));
-        Assert.Equal(-1m, point.ExportIncomeChartGbp);
-        var segments = YearAnalysisBuilder.BuildCostColumnSegments([point], CostColumnMode.StackedBreakdown);
-        var peak = Assert.Single(segments, value => value.SeriesName == "Peak import cost");
-        var offPeak = Assert.Single(segments, value => value.SeriesName == "Off-peak import cost");
-        var export = Assert.Single(segments, value => value.SeriesName == "Export income");
-        Assert.Equal((0m, 2m), (peak.ValueBase, peak.ValueEnd));
-        Assert.Equal((2m, 3m), (offPeak.ValueBase, offPeak.ValueEnd));
-        Assert.Equal((0m, -1m), (export.ValueBase, export.ValueEnd));
-    }
-
-    [Fact]
-    public void NetCostColumns_DistinguishCostProfitAndBreakEvenMonths()
-    {
-        var points = new[]
-        {
-            new MonthlyCostColumnPoint(new(2026, 1, 1), 3m, 1m, -1m, 3m),
-            new MonthlyCostColumnPoint(new(2026, 2, 1), 1m, 0m, -2m, -1m),
-            new MonthlyCostColumnPoint(new(2026, 3, 1), 1m, 0m, -1m, 0m)
-        };
-        var segments = YearAnalysisBuilder.BuildCostColumnSegments(points, CostColumnMode.NetCost);
-        Assert.Equal("Net electricity cost", segments[0].SeriesName);
-        Assert.Equal("Profit / export surplus", segments[1].SeriesName);
-        Assert.Equal("Break-even", segments[2].SeriesName);
-        Assert.Equal([3m, -1m, 0m], segments.Select(value => value.Value));
-    }
 
     private static IReadOnlyList<MonthlyEnergyInsight> Insights(params EnergyPeriodPoint[] points) => EnergyInsightBuilder.BuildMonthly(points);
     private static EnergyPeriodPoint Point(DateOnly month, decimal import, decimal export, decimal gas, decimal importCost, decimal exportIncome, decimal gasCost)

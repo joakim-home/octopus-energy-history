@@ -92,32 +92,6 @@ public static class EnergyCostQuality
     }
 }
 
-public static class EnergySpikeDetector
-{
-    public static IReadOnlyList<EnergySpike> Detect(IReadOnlyCollection<EnergyPeriodPoint> daily, int rollingDays = 30, decimal threshold = 3m, int minimumBaselineDays = 1)
-    {
-        if (rollingDays < 1) throw new ArgumentOutOfRangeException(nameof(rollingDays));
-        if (threshold <= 0) throw new ArgumentOutOfRangeException(nameof(threshold));
-        var ordered = daily.OrderBy(point => point.Period).ToArray();
-        var spikes = new List<EnergySpike>();
-        for (var index = 0; index < ordered.Length; index++)
-        {
-            var from = ordered[index].Period.AddDays(-rollingDays);
-            var baseline = ordered.Take(index).Where(point => point.Period >= from).ToArray();
-            if (baseline.Length < minimumBaselineDays) continue;
-            AddIfSpike(EnergyFlowType.ElectricityImport, ordered[index].ImportKwh, baseline.Average(point => point.ImportKwh));
-            AddIfSpike(EnergyFlowType.ElectricityExport, ordered[index].ExportKwh, baseline.Average(point => point.ExportKwh));
-
-            void AddIfSpike(EnergyFlowType flow, decimal value, decimal average)
-            {
-                if (average <= 0 || value <= average * threshold) return;
-                spikes.Add(new(ordered[index].Period, flow, value, average, value / average));
-            }
-        }
-        return spikes;
-    }
-}
-
 public static class DataQualityGrouping
 {
     public static IReadOnlyList<DataQualityGroup> Group(IEnumerable<string> warnings)

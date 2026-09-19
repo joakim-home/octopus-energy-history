@@ -61,6 +61,73 @@ public static class EnergyComparisonEngine
         return new(configuration, baselinePeriod, solarPeriod, Metrics(before, after), SameMonth(before, after), away);
     }
 
+    public static SolarSavingsEstimate EstimateSolarSavings(IReadOnlyCollection<EnergyPeriodPoint> daily, SolarAnalysisConfiguration configuration, DateOnly today)
+    {
+        var start = configuration.EffectiveStartDate;
+        if (start is null) return new(null, 0, null, null);
+
+        static bool ActualExact(EnergyPeriodPoint point)
+            => point.ImportCostExact
+               && (point.ExportKwh == 0 || point.ExportIncomeExact)
+               && (point.GasKwh == 0 || point.GasCostExact);
+
+        static decimal ActualVariableCost(EnergyPeriodPoint point)
+            => point.ImportCost - point.ExportIncome + point.GasCost;
+
+        var ordered = daily.OrderBy(point => point.Period).ToArray();
+        var baseline = ordered.Where(point => point.Period < start.Value).ToArray();
+        var candidates = ordered.Where(point => point.Period >= start.Value && point.Period < today && ActualExact(point)).ToArray();
+
+        var rates = candidates
+            .GroupBy(point => new DateOnly(point.Period.Year, point.Period.Month, 1))
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var peakKwh = group.Sum(point => point.PeakImportKwh);
+                    var offPeakKwh = group.Sum(point => point.OffPeakImportKwh);
+                    var gasKwh = group.Sum(point => point.GasKwh);
+                    var peakExact = group.All(point => point.PeakImportKwh == 0 || point.PeakCostExact);
+                    var offPeakExact = group.All(point => point.OffPeakImportKwh == 0 || point.OffPeakCostExact);
+                    var gasExact = group.All(point => point.GasKwh == 0 || point.GasCostExact);
+                    return (
+                        PeakRate: peakKwh > 0 && peakExact ? group.Sum(point => point.PeakImportCost) / peakKwh : (decimal?)null,
+                        OffPeakRate: offPeakKwh > 0 && offPeakExact ? group.Sum(point => point.OffPeakImportCost) / offPeakKwh : (decimal?)null,
+                        GasRate: gasKwh > 0 && gasExact ? group.Sum(point => point.GasCost) / gasKwh : (decimal?)null);
+                });
+
+        decimal savings = 0;
+        var used = new List<DateOnly>();
+        foreach (var current in candidates)
+        {
+            var sameMonth = baseline.Where(point => point.Period.Month == current.Period.Month).ToArray();
+            if (sameMonth.Length == 0) continue;
+
+            var baselinePeak = sameMonth.Average(point => point.PeakImportKwh);
+            var baselineOffPeak = sameMonth.Average(point => point.OffPeakImportKwh);
+            var baselineUnknown = sameMonth.Average(point => point.UnknownImportKwh);
+            var baselineGas = sameMonth.Average(point => point.GasKwh);
+            if (baselineUnknown > 0.001m) continue;
+
+            var rateMonth = new DateOnly(current.Period.Year, current.Period.Month, 1);
+            if (!rates.TryGetValue(rateMonth, out var rate)) continue;
+            if (baselinePeak > 0 && rate.PeakRate is null) continue;
+            if (baselineOffPeak > 0 && rate.OffPeakRate is null) continue;
+            if (baselineGas > 0 && rate.GasRate is null) continue;
+
+            var expected = baselinePeak * (rate.PeakRate ?? 0)
+                         + baselineOffPeak * (rate.OffPeakRate ?? 0)
+                         + baselineGas * (rate.GasRate ?? 0);
+
+            savings += expected - ActualVariableCost(current);
+            used.Add(current.Period);
+        }
+
+        return used.Count == 0
+            ? new(null, 0, null, null)
+            : new(decimal.Round(savings, 2), used.Count, used[0], used[^1]);
+    }
+
     public static MarkerImpactAnalysis AnalyzeMarker(IReadOnlyCollection<MonthlyEnergyInsight> monthly, HomeEvent marker, IReadOnlyCollection<HomeEvent> markers, bool excludeAwayMonths)
     {
         var boundaryMonth = new DateOnly(marker.Date.Year, marker.Date.Month, 1);

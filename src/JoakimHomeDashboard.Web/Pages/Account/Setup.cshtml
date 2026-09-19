@@ -1,0 +1,23 @@
+@page
+@model JoakimHomeDashboard.Web.Pages.Account.SetupModel
+@{
+    ViewData["Title"] = "Create administrator";
+}
+<section class="auth-shell">
+    <div class="card auth-card stack">
+        <div>
+            <p class="eyebrow">FIRST RUN</p>
+            <h1>Create administrator</h1>
+            <p>This local account protects the dashboard and configuration pages.</p>
+        </div>
+        <div asp-validation-summary="All" class="validation"></div>
+        <form method="post" class="stack">
+            <input asp-for="ReturnUrl" type="hidden" />
+            <label>Username<input asp-for="Input.Username" autocomplete="username" autofocus /></label>
+            <label>Password<input asp-for="Input.Password" type="password" autocomplete="new-password" /></label>
+            <label>Confirm password<input asp-for="Input.ConfirmPassword" type="password" autocomplete="new-password" /></label>
+            <small class="muted">Use at least 12 characters. The password is stored only as a salted hash.</small>
+            <button type="submit" class="primary">Create administrator</button>
+        </form>
+    </div>
+</section>

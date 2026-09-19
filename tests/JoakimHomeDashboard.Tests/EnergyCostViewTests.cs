@@ -26,20 +26,24 @@ public sealed class EnergyCostViewTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-cost-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var start = new DateTimeOffset(DateTime.SpecifyKind(DateTime.Today,DateTimeKind.Unspecified), TimeSpan.Zero);
             await repository.UpsertOctopusRawReadingsAsync([
                 new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,2m,0.60m,"IMP","I1","IMPORT-A","cost-import"),
                 new(start,start.AddMinutes(30),EnergyFlowType.ElectricityExport,1m,-0.15m,"EXP","E1","EXPORT-A","cost-export"),
                 new(start,start.AddHours(1),EnergyFlowType.Gas,5m,0.35m,"GAS","G1","GAS-A","cost-gas")]);
-            await repository.UpsertOctopusStandingChargesAsync([new(DateOnly.FromDateTime(DateTime.Today),"GAS","GAS-A",0.30m)]);
+            await repository.UpsertOctopusStandingChargesAsync([
+                new(DateOnly.FromDateTime(DateTime.Today),"IMP","IMPORT-A",0.10m),
+                new(DateOnly.FromDateTime(DateTime.Today),"GAS","GAS-A",0.20m)]);
             await repository.SetSolarManualOverrideAsync(DateOnly.FromDateTime(DateTime.Today));
             await repository.RebuildOctopusRollupsAsync();
 
             var dashboard = await repository.GetEnergyDashboardAsync();
             Assert.Equal(0.60m, dashboard.TodayCost.ImportCost); Assert.Equal(0.15m, dashboard.TodayCost.ExportIncome);
-            Assert.Equal(0.65m, dashboard.TodayCost.GasCost); Assert.Equal(1.10m, dashboard.TodayCost.NetCost);
-            Assert.True(dashboard.TodayCost.ImportExact); Assert.True(dashboard.TodayCost.ExportExact); Assert.True(dashboard.TodayCost.GasExact);
+            Assert.Equal(0.35m, dashboard.TodayCost.GasCost); Assert.Equal(0.30m, dashboard.TodayCost.StandingCharge); Assert.Equal(1.10m, dashboard.TodayCost.NetCost);
+            var day = Assert.Single(dashboard.Daily, x => x.Period == DateOnly.FromDateTime(DateTime.Today));
+            Assert.Equal(0.30m, day.StandingChargeGbp); Assert.Equal(0.35m, day.GasCost);
+            Assert.True(dashboard.TodayCost.ImportExact); Assert.True(dashboard.TodayCost.ExportExact); Assert.True(dashboard.TodayCost.GasExact); Assert.True(dashboard.TodayCost.StandingExact);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
@@ -69,7 +73,7 @@ public sealed class EnergyCostViewTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-backfill-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var start = DateTimeOffset.Parse("2024-03-01T00:00:00Z");
             await repository.UpsertOctopusRawReadingsAsync([new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,1m,null,"IMP","I1","IMPORT-OLD","uncosted")]);
             Assert.Equal(start,await repository.GetEarliestUncostedOctopusReadingAsync("IMP","I1",EnergyFlowType.ElectricityImport));
@@ -83,7 +87,7 @@ public sealed class EnergyCostViewTests
         var path=Path.Combine(Path.GetTempPath(),$"joakim-backfill-cost-{Guid.NewGuid():N}.db");
         try
         {
-            var repository=new SqliteDashboardRepository(path); await repository.InitializeAsync(); var start=new DateTimeOffset(DateTime.Today.Year,DateTime.Today.Month,1,0,0,0,TimeSpan.Zero);
+            var repository=new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync(); var start=new DateTimeOffset(DateTime.Today.Year,DateTime.Today.Month,1,0,0,0,TimeSpan.Zero);
             var id="historical-import"; await repository.UpsertOctopusRawReadingsAsync([new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,2m,null,"IMP","I1","E-1R-INTELLI-GO-A",id)]);
             await repository.UpsertOctopusRawReadingsAsync([new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,2m,0.60m,"IMP","I1","E-1R-INTELLI-GO-A",id,ImportRateBand.Peak,30m)]); await repository.RebuildOctopusRollupsAsync();
             var dashboard=await repository.GetEnergyDashboardAsync(); Assert.Equal(2m,dashboard.MonthImportBreakdown.PeakKwh); Assert.Equal(0.60m,dashboard.MonthImportBreakdown.PeakCost); Assert.True(dashboard.MonthImportBreakdown.PeakCostExact);
@@ -97,7 +101,7 @@ public sealed class EnergyCostViewTests
         var path=Path.Combine(Path.GetTempPath(),$"joakim-preserve-cost-{Guid.NewGuid():N}.db");
         try
         {
-            var repository=new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository=new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var start=new DateTimeOffset(DateTime.Today.Year,DateTime.Today.Month,1,0,0,0,TimeSpan.Zero); var id="preserved-import";
             await repository.UpsertOctopusRawReadingsAsync([new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,1m,0.30m,"IMP","I1","E-1R-INTELLI-GO-A",id,ImportRateBand.Peak,30m)]);
             await repository.UpsertOctopusRawReadingsAsync([new(start,start.AddMinutes(30),EnergyFlowType.ElectricityImport,1m,null,"IMP","I1","E-1R-INTELLI-GO-A",id)]);
@@ -137,33 +141,5 @@ public sealed class EnergyCostViewTests
         Assert.DoesNotContain(warnings, warning => warning.Contains("Gas unit cost exceeds", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public async Task SelectedViewMode_PersistsBetweenPreferenceInstances()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"joakim-view-{Guid.NewGuid():N}.db");
-        try
-        {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
-            Assert.Equal(AnalysisChartType.Columns,await new UserPreferences(repository).GetYearAnalysisChartTypeAsync());
-            Assert.Equal(AnalysisChartType.Columns,await new UserPreferences(repository).GetMonthlyCostChartTypeAsync());
-            Assert.Equal(CostColumnMode.StackedBreakdown,await new UserPreferences(repository).GetCostColumnModeAsync());
-            await new UserPreferences(repository).SetEnergyViewModeAsync(EnergyViewMode.Both);
-            Assert.Equal(EnergyViewMode.Both,await new UserPreferences(repository).GetEnergyViewModeAsync());
-            await new UserPreferences(repository).SetYearAnalysisChartTypeAsync(AnalysisChartType.Columns);
-            Assert.Equal(AnalysisChartType.Columns,await new UserPreferences(repository).GetYearAnalysisChartTypeAsync());
-            await new UserPreferences(repository).SetMonthlyCostChartTypeAsync(AnalysisChartType.Line);
-            await new UserPreferences(repository).SetCostColumnModeAsync(CostColumnMode.NetCost);
-            Assert.Equal(AnalysisChartType.Line,await new UserPreferences(repository).GetMonthlyCostChartTypeAsync());
-            Assert.Equal(CostColumnMode.NetCost,await new UserPreferences(repository).GetCostColumnModeAsync());
-        }
-        finally { if (File.Exists(path)) File.Delete(path); }
-    }
 
-    [Fact]
-    public void EmptyCostSeries_DoesNotRequestDateAxisAndHoverModelFormatsExactPoint()
-    {
-        Assert.False(ChartPresentation.HasFiniteValues([double.NaN,double.NaN]));
-        var text=ChartPresentation.FormatHover([new(new(2026,6,18),"Import",0.42m,"£",ImportRateBand.OffPeak)]);
-        Assert.Contains("18 Jun 2026",text,StringComparison.Ordinal); Assert.Contains("Import (off-peak): £0.4200",text,StringComparison.Ordinal);
-    }
 }

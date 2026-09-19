@@ -15,11 +15,11 @@ public sealed class OctopusDiscoveryTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-discovery-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey", "fixture-key", true);
             using var client = new HttpClient(new DiscoveryHandler()); var connector = new OctopusEnergyDataSource(repository, repository, repository, client);
             var result = await connector.DiscoverAccountAsync(); var stored = await repository.GetOctopusMeterPointsAsync();
-            Assert.Equal("A-1234ABCD", result.AccountNumber); Assert.Equal(4, result.MeterPoints.Count); Assert.Equal(4, stored.Count);
-            Assert.Contains(stored, x => x.FuelType == "electricity" && !x.IsExport && x.MeterPoint == "1000000000001");
+            Assert.Equal("ACCOUNT-DEMO", result.AccountNumber); Assert.Equal(4, result.MeterPoints.Count); Assert.Equal(4, stored.Count);
+            Assert.Contains(stored, x => x.FuelType == "electricity" && !x.IsExport && x.MeterPoint == "MPAN-DEMO-IMPORT");
             Assert.Contains(stored, x => x.FuelType == "electricity" && x.IsExport); Assert.Equal(2, stored.Count(x => x.FuelType == "gas"));
         }
         finally { if (File.Exists(path)) File.Delete(path); }
@@ -32,13 +32,13 @@ public sealed class OctopusDiscoveryTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-upgrade-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
-            await repository.SetSettingAsync("octopus.apiKey","fixture-key",true); await repository.SetSettingAsync("octopus.accountCode","A-UPGRADE");
-            await repository.SetSettingAsync("octopus.discoveredAccount","A-UPGRADE");
-            await repository.SetSettingAsync("octopus.mpan","1000000000001"); await repository.SetSettingAsync("octopus.meterSerial","IMP1");
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
+            await repository.SetSettingAsync("octopus.apiKey","fixture-key",true); await repository.SetSettingAsync("octopus.accountCode","ACCOUNT-UPGRADE-DEMO");
+            await repository.SetSettingAsync("octopus.discoveredAccount","ACCOUNT-UPGRADE-DEMO");
+            await repository.SetSettingAsync("octopus.mpan","MPAN-DEMO-IMPORT"); await repository.SetSettingAsync("octopus.meterSerial","IMP1");
             await repository.SetSettingAsync("octopus.productCode","STALE-PRODUCT"); await repository.SetSettingAsync("octopus.tariffCode","E-1R-STALE-PRODUCT-A");
-            var legacyMeter = new OctopusMeterPoint("A-UPGRADE",1,"electricity",false,"1000000000001","IMP1","E-1R-STALE-PRODUCT-A","STALE-PRODUCT",null,null);
-            await repository.ReplaceOctopusConfigurationAsync(new("A-UPGRADE",1,[legacyMeter],[]));
+            var legacyMeter = new OctopusMeterPoint("ACCOUNT-UPGRADE-DEMO",1,"electricity",false,"MPAN-DEMO-IMPORT","IMP1","E-1R-STALE-PRODUCT-A","STALE-PRODUCT",null,null);
+            await repository.ReplaceOctopusConfigurationAsync(new("ACCOUNT-UPGRADE-DEMO",1,[legacyMeter],[]));
             var handler=new UpgradeHandler(); using var client=new HttpClient(handler); var connector=new OctopusEnergyDataSource(repository,repository,repository,client);
 
             var result=await connector.SyncAsync(CancellationToken.None); var dashboard=await repository.GetEnergyDashboardAsync();
@@ -54,11 +54,14 @@ public sealed class OctopusDiscoveryTests
         if(!OperatingSystem.IsWindows()) return; var path=Path.Combine(Path.GetTempPath(),$"joakim-dual-rate-{Guid.NewGuid():N}.db");
         try
         {
-            var repository=new SqliteDashboardRepository(path); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey","fixture-key",true);
+            var repository=new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync(); await repository.SetSettingAsync("octopus.apiKey","fixture-key",true);
             var meter=new OctopusMeterPoint("A",1,"electricity",false,"IMP","I1","E-1R-INTELLI-VAR-A","INTELLI-VAR",new(2025,1,1,0,0,0,TimeSpan.Zero),null);
             var periods=new[] { new OctopusTariffPeriod("A",1,"electricity",false,"IMP","E-2R-VAR-A","VAR",new(2024,1,1,0,0,0,TimeSpan.Zero),new(2024,3,1,0,0,0,TimeSpan.Zero)),new OctopusTariffPeriod("A",1,"electricity",false,"IMP",meter.TariffCode,meter.ProductCode,meter.ValidFrom,null) };
             await repository.ReplaceOctopusConfigurationAsync(new("A",1,[meter],[],periods)); var handler=new DualRateHandler(); using var client=new HttpClient(handler); var result=await new OctopusEnergyDataSource(repository,repository,repository,client).SyncAsync(CancellationToken.None);
-            Assert.True(result.Succeeded,result.Message); Assert.DoesNotContain(handler.Paths,path=>path.Contains("E-2R",StringComparison.OrdinalIgnoreCase)); Assert.Contains(handler.Paths,path=>path.Contains("INTELLI",StringComparison.OrdinalIgnoreCase));
+            Assert.True(result.Succeeded,result.Message);
+            Assert.DoesNotContain(handler.Paths,path=>path.Contains("E-2R",StringComparison.OrdinalIgnoreCase)&&path.Contains("standard-unit-rates",StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(handler.Paths,path=>path.Contains("E-2R",StringComparison.OrdinalIgnoreCase)&&path.Contains("standing-charges",StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(handler.Paths,path=>path.Contains("INTELLI",StringComparison.OrdinalIgnoreCase));
             Assert.True(Assert.Single((await repository.GetEnergyDashboardAsync()).Daily).ImportCostExact);
         }
         finally { if(File.Exists(path)) File.Delete(path); }
@@ -73,11 +76,11 @@ public sealed class OctopusDiscoveryTests
                 var body = await request.Content!.ReadAsStringAsync(cancellationToken);
                 var json = body.Contains("obtainKrakenToken", StringComparison.Ordinal)
                     ? """{"data":{"obtainKrakenToken":{"token":"fixture-jwt"}}}"""
-                    : """{"data":{"viewer":{"accounts":[{"number":"A-1234ABCD"}]}}}""";
+                    : """{"data":{"viewer":{"accounts":[{"number":"ACCOUNT-DEMO"}]}}}""";
                 return Ok(json);
             }
-            if (request.RequestUri?.AbsolutePath == "/v1/accounts/A-1234ABCD/")
-                return Ok("""{"number":"A-1234ABCD","properties":[{"id":10,"moved_out_at":null,"electricity_meter_points":[{"mpan":"1000000000001","is_export":false,"meters":[{"serial_number":"IMP1"}],"agreements":[{"tariff_code":"E-1R-INTELLI-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]},{"mpan":"1000000000002","is_export":true,"meters":[{"serial_number":"EXP1"}],"agreements":[{"tariff_code":"E-1R-OUTGOING-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}],"gas_meter_points":[{"mprn":"2000000001","meters":[{"serial_number":"GAS1"},{"serial_number":"GAS2"}],"agreements":[{"tariff_code":"G-1R-FLEX-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}]}]}""");
+            if (request.RequestUri?.AbsolutePath == "/v1/accounts/ACCOUNT-DEMO/")
+                return Ok("""{"number":"ACCOUNT-DEMO","properties":[{"id":10,"moved_out_at":null,"electricity_meter_points":[{"mpan":"MPAN-DEMO-IMPORT","is_export":false,"meters":[{"serial_number":"IMP1"}],"agreements":[{"tariff_code":"E-1R-INTELLI-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]},{"mpan":"MPAN-DEMO-EXPORT","is_export":true,"meters":[{"serial_number":"EXP1"}],"agreements":[{"tariff_code":"E-1R-OUTGOING-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}],"gas_meter_points":[{"mprn":"MPRN-DEMO-SECONDARY","meters":[{"serial_number":"GAS1"},{"serial_number":"GAS2"}],"agreements":[{"tariff_code":"G-1R-FLEX-26-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}]}]}""");
             return new(HttpStatusCode.NotFound);
         }
         private static HttpResponseMessage Ok(string json) => new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -90,7 +93,7 @@ public sealed class OctopusDiscoveryTests
         {
             var path=request.RequestUri?.AbsolutePath??""; Paths.Add(path);
             if(path=="/v1/products/INTELLI-VAR-25-01/") return Task.FromResult(OctopusMetadataFixture.Response("INTELLI-VAR-25-01", "E-1R-INTELLI-VAR-25-01-A"));
-            if(path=="/v1/accounts/A-UPGRADE/") return Task.FromResult(Ok("""{"number":"A-UPGRADE","properties":[{"id":1,"moved_out_at":null,"electricity_meter_points":[{"mpan":"1000000000001","is_export":false,"meters":[{"serial_number":"IMP1"}],"agreements":[{"tariff_code":"E-1R-INTELLI-VAR-25-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}],"gas_meter_points":[]}]}"""));
+            if(path=="/v1/accounts/ACCOUNT-UPGRADE-DEMO/") return Task.FromResult(Ok("""{"number":"ACCOUNT-UPGRADE-DEMO","properties":[{"id":1,"moved_out_at":null,"electricity_meter_points":[{"mpan":"MPAN-DEMO-IMPORT","is_export":false,"meters":[{"serial_number":"IMP1"}],"agreements":[{"tariff_code":"E-1R-INTELLI-VAR-25-01-A","valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}],"gas_meter_points":[]}]}"""));
             if(path.Contains("standard-unit-rates",StringComparison.Ordinal)) return Task.FromResult(Ok("""{"next":null,"results":[{"value_inc_vat":25,"valid_from":"2025-01-01T00:00:00Z","valid_to":null}]}"""));
             if(path.Contains("consumption",StringComparison.Ordinal)) return Task.FromResult(Ok("""{"next":null,"results":[{"consumption":1,"interval_start":"2026-06-18T00:00:00Z","interval_end":"2026-06-18T00:30:00Z"}]}"""));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

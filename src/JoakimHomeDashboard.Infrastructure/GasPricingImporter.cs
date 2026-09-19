@@ -17,12 +17,16 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
         var ct=cancellationToken; int expected=0, priced=0; string? token=null;
         var key=await repository.GetSettingAsync(SettingKeys.OctopusApiKey,ct) ?? "";
         var tariffs=(await configuration.GetOctopusTariffPeriodsAsync(ct)).Where(t=>t.FuelType=="gas").ToArray();
+        var rateCache=new Dictionary<(string Product,string Tariff),(List<GasRate> Rates,string Metadata,string[] Pages)>();
         try
         {
             foreach(var meter in tariffs.GroupBy(t=>t.MeterPoint))
             foreach(var day in (await store.UnpricedGasAsync(meter.Key,ct)).GroupBy(r=>r.LocalDate))
             {
-                expected+=day.Count();
+                var candidates=day.Select(row=>(Row:row,Agreements:meter.Where(t=>row.Start>=(t.ValidFrom??DateTimeOffset.MinValue)&&row.End<=(t.ValidTo??DateTimeOffset.MaxValue)).ToArray()))
+                    .Where(x=>x.Agreements.Length>0).ToArray();
+                if(candidates.Length==0) continue;
+                expected+=candidates.Length;
                 if(token is null)
                 {
                     using var auth=JsonDocument.Parse(await GraphqlAsync("mutation($key:String!){obtainKrakenToken(input:{APIKey:$key}){token}}",new {key},null,ct));
@@ -31,12 +35,12 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
                 var account=meter.Select(t=>t.AccountNumber).Distinct().ToArray(); if(account.Length!=1) continue;
                 var payment=await GraphqlAsync(PaymentQuery,new {account=account[0],date=day.Key},token,ct);
                 var method=ResolvePaymentMethod(payment); if(method is null) continue;
-                var rateCache=new Dictionary<string,(List<GasRate> Rates,string Evidence)>();
-                foreach(var row in day)
+                foreach(var candidate in candidates)
                 {
-                    var agreements=meter.Where(t=>row.Start>=(t.ValidFrom??DateTimeOffset.MinValue)&&row.End<=(t.ValidTo??DateTimeOffset.MaxValue)).ToArray();
+                    var row=candidate.Row; var agreements=candidate.Agreements;
                     if(agreements.Length!=1) continue; var agreement=agreements[0];
-                    if(!rateCache.TryGetValue(agreement.TariffCode,out var cache))
+                    var cacheKey=(agreement.ProductCode,agreement.TariffCode);
+                    if(!rateCache.TryGetValue(cacheKey,out var cache))
                     {
                         var metadata=await GetAsync(new Uri(Base+$"products/{Uri.EscapeDataString(agreement.ProductCode)}/?tariffs_active_at={Uri.EscapeDataString(row.Start.ToString("O"))}"),key,ct);
                         var parsed=OctopusTariffMetadata.Parse(metadata,agreement.TariffCode);
@@ -56,11 +60,12 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
                             next=doc.RootElement.TryGetProperty("next",out var n)&&n.ValueKind==JsonValueKind.String?new Uri(n.GetString()!):null;
                         }
                         }
-                        cache=(rates,JsonSerializer.Serialize(new {payment,metadata,ratePages=pages,taxBasis="value_inc_vat",provenance="supplier_tariff_calculation"})); rateCache[agreement.TariffCode]=cache;
+                        cache=(rates,metadata,pages.ToArray()); rateCache[cacheKey]=cache;
                     }
                     var matches=cache.Rates.Where(r=>!r.Standing&&row.Start>=r.From&&row.End<=r.To&&(r.Method is null||r.Method==method)).Distinct().ToArray();
                     if(matches.Length!=1) continue;
-                    await store.SaveGasPriceAsync(row,matches[0].Rate,method,agreement.TariffCode,cache.Evidence,ct); priced++;
+                    var evidence=JsonSerializer.Serialize(new {payment,metadata=cache.Metadata,ratePages=cache.Pages,taxBasis="value_inc_vat",provenance="supplier_tariff_calculation"});
+                    await store.SaveGasPriceAsync(row,matches[0].Rate,method,agreement.TariffCode,evidence,ct); priced++;
                     var date=DateOnly.Parse(day.Key); var midnight=date.ToDateTime(TimeOnly.MinValue);
                     var instant=new DateTimeOffset(midnight,TimeZoneInfo.FindSystemTimeZoneById("Europe/London").GetUtcOffset(midnight));
                     var standing=cache.Rates.Where(r=>r.Standing&&instant>=r.From&&instant<r.To&&(r.Method is null||r.Method==method)).Distinct().ToArray();

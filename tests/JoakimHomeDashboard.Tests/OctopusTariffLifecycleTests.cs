@@ -13,6 +13,7 @@ public sealed class OctopusTariffLifecycleTests
     [Theory]
     [InlineData("single_register_electricity_tariffs", "Intelligent Octopus Go", OctopusProductSemantics.IntelligentGoIntervalRates)]
     [InlineData("single_register_electricity_tariffs", "Flexible Octopus", OctopusProductSemantics.StandardIntervalRates)]
+    [InlineData("single_register_gas_tariffs", "Flexible Octopus", OctopusProductSemantics.StandardIntervalRates)]
     [InlineData("four_rate_ev_electricity_tariffs", "Intelligent Octopus Go", OctopusProductSemantics.FourRateEv)]
     [InlineData("dual_register_electricity_tariffs", "Intelligent Octopus Go", OctopusProductSemantics.DualRegister)]
     public void SemanticsComeFromMetadata_NotCodeSubstrings(string group, string name, OctopusProductSemantics expected)
@@ -110,7 +111,9 @@ public sealed class OctopusTariffLifecycleTests
         Assert.True(result.Succeeded, result.Message);
         Assert.Contains("authoritative home/EV allocation", result.Message);
         Assert.Contains(fixture.Handler.Paths, path => path.EndsWith("/ev-device-off-peak-unit-rates/", StringComparison.Ordinal));
+        Assert.Contains(fixture.Handler.Paths, path => path.EndsWith("/standing-charges/", StringComparison.Ordinal));
         Assert.DoesNotContain(fixture.Handler.Paths, path => path.Contains("/E-1R-NEW-PRODUCT-A/standard-unit-rates/", StringComparison.Ordinal));
+        Assert.True(await fixture.StandingTotal() > 0);
         Assert.Equal(before, await fixture.Rows());
         fixture.Handler.AddNextInterval = true;
         await fixture.Connector.SyncAsync(CancellationToken.None);
@@ -253,6 +256,12 @@ public sealed class OctopusTariffLifecycleTests
             await fixture.Repository.ReplaceOctopusConfigurationAsync(new("A", 1, [new("A", 1, "electricity", false, "IMP", "M1", "OLD", "OLD", boundary.AddDays(-2), boundary)], [], [Period("OLD", boundary.AddDays(-2), boundary)]));
             return fixture;
         }
+        public async Task<decimal> StandingTotal()
+        {
+            using var connection = new SqliteConnection($"Data Source={Path};Pooling=False"); await connection.OpenAsync();
+            using var command = connection.CreateCommand(); command.CommandText = "SELECT COALESCE(SUM(cost_gbp),0) FROM octopus_standing_charges";
+            return Convert.ToDecimal(await command.ExecuteScalarAsync());
+        }
         public async Task<string> Rows()
         {
             using var connection = new SqliteConnection($"Data Source={Path};Pooling=False");
@@ -298,7 +307,7 @@ public sealed class OctopusTariffLifecycleTests
             }
             if (uri.AbsolutePath.EndsWith("/OLD-PRODUCT/", StringComparison.Ordinal)) return Task.FromResult(OctopusMetadataFixture.Response("OLD-PRODUCT", "E-1R-OLD-PRODUCT-A"));
             if (uri.AbsolutePath.EndsWith("/NEW-PRODUCT/", StringComparison.Ordinal)) return Task.FromResult(OctopusMetadataFixture.Response("NEW-PRODUCT", "E-1R-NEW-PRODUCT-A", FourRate ? "four_rate_ev_electricity_tariffs" : "single_register_electricity_tariffs"));
-            if (uri.AbsolutePath.Contains("unit-rates", StringComparison.Ordinal))
+            if (uri.AbsolutePath.Contains("unit-rates", StringComparison.Ordinal) || uri.AbsolutePath.Contains("standing-charges", StringComparison.Ordinal))
             {
                 if (EmptyRates) return Ok("{\"results\":[],\"next\":null}");
                 var next = Paginate && !uri.Query.Contains("page=2", StringComparison.Ordinal) ? uri.GetLeftPart(UriPartial.Path) + "?page=2" : null;

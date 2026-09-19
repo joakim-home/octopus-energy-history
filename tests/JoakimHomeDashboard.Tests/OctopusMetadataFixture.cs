@@ -11,7 +11,7 @@ internal static class OctopusMetadataFixture
 
     public static string Json(string product, string tariff, string group = "single_register_electricity_tariffs", string name = "Intelligent Octopus Go")
     {
-        var fuel = group == "gas_tariffs" ? "gas" : "electricity";
+        var fuel = group is "single_register_gas_tariffs" or "gas_tariffs" ? "gas" : "electricity";
         var relations = group == "four_rate_ev_electricity_tariffs"
             ? new[] { "day_unit_rates", "night_unit_rates", "ev_device_peak_unit_rates", "ev_device_off_peak_unit_rates", "standing_charges" }
             : new[] { "standard_unit_rates", "standing_charges" };

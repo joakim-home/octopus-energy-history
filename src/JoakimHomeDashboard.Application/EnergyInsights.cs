@@ -20,7 +20,9 @@ public static class EnergyInsightBuilder
                     IsExact(values, point => point.ExportKwh, point => point.ExportIncomeExact),
                     IsExact(values, point => point.GasKwh, point => point.GasCostExact),
                     IsExact(values, point => point.PeakImportKwh, point => point.PeakCostExact),
-                    IsExact(values, point => point.OffPeakImportKwh, point => point.OffPeakCostExact));
+                    IsExact(values, point => point.OffPeakImportKwh, point => point.OffPeakCostExact),
+                    StandingChargeGbp: values.Sum(point => point.StandingChargeGbp),
+                    StandingChargeExact: values.All(point => point.StandingChargeExact));
             }).ToArray();
 
     public static MonthlyEnergyInsight Total(IEnumerable<MonthlyEnergyInsight> source)
@@ -38,7 +40,8 @@ public static class EnergyInsightBuilder
             HasExact(values, point => point.PeakImportKwh, point => point.PeakCostExact),
             HasExact(values, point => point.OffPeakImportKwh, point => point.OffPeakCostExact),
             values.Sum(point => point.SolarGenerationKwh), values.Sum(point => point.SelfConsumptionKwh),
-            values.Sum(point => point.BatteryChargeKwh), values.Sum(point => point.BatteryDischargeKwh));
+            values.Sum(point => point.BatteryChargeKwh), values.Sum(point => point.BatteryDischargeKwh),
+            values.Sum(point => point.StandingChargeGbp), values.All(point => point.StandingChargeExact));
     }
 
     private static bool IsExact(IEnumerable<EnergyPeriodPoint> values, Func<EnergyPeriodPoint, decimal> quantity, Func<EnergyPeriodPoint, bool> exact)

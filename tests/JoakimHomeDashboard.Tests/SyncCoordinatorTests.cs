@@ -11,7 +11,7 @@ public sealed class SyncCoordinatorTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-sync-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var coordinator = new SyncCoordinator([new FakeConnector("Working", false), new FakeConnector("Broken", true)], repository);
             var results = await coordinator.SyncAllAsync(); var statuses = await coordinator.GetStatusesAsync();
             Assert.Equal(2, results.Count); Assert.Contains(results, x => x.Source == "Working" && x.Succeeded); Assert.Contains(results, x => x.Source == "Broken" && !x.Succeeded);

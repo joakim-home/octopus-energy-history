@@ -1,7 +1,6 @@
 using JoakimHomeDashboard.Application;
 using JoakimHomeDashboard.Domain;
 using JoakimHomeDashboard.Infrastructure;
-using Microsoft.Data.Sqlite;
 
 namespace JoakimHomeDashboard.Tests;
 
@@ -43,7 +42,7 @@ public sealed class SolarAnalysisTests
         var path = Path.Combine(Path.GetTempPath(), $"joakim-solar-config-{Guid.NewGuid():N}.db");
         try
         {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector()); await repository.InitializeAsync();
             var start = DateTimeOffset.Parse("2025-08-01T00:00:00Z");
             await repository.UpsertOctopusRawReadingsAsync(Enumerable.Range(0, 5).Select(day => new OctopusRawReading(start.AddDays(day), start.AddDays(day).AddMinutes(30), EnergyFlowType.ElectricityExport, 1m, -0.15m, "EXP", "E1", "EXPORT", $"export-{day}")).ToArray());
             await repository.RebuildOctopusRollupsAsync();
@@ -88,6 +87,79 @@ public sealed class SolarAnalysisTests
     }
 
     [Fact]
+    public void EstimatedSavings_UsesExactSolarStartAndCompleteDays()
+    {
+        var daily = new[]
+        {
+            Point(new(2024, 11, 1), 5m, 0m, 5m, 5m, 0m, 5m),
+            Point(new(2024, 11, 2), 5m, 0m, 5m, 5m, 0m, 5m),
+            Point(new(2025, 11, 23), 5m, 0m, 5m, 5m, 0m, 5m),
+            Point(new(2025, 11, 24), 8m, 0m, 1m, 8m, 0m, 1m),
+            Point(new(2025, 11, 25), 7m, 0m, 1m, 7m, 0m, 1m),
+            Point(new(2025, 11, 26), 0m, 0m, 0m, 0m, 0m, 0m)
+        };
+        var config = new SolarAnalysisConfiguration(new(2025, 11, 24), SolarDetectionConfidence.High, "test", null, null);
+
+        var estimate = EnergyComparisonEngine.EstimateSolarSavings(daily, config, new(2025, 11, 26));
+
+        Assert.True(estimate.HasData);
+        Assert.Equal(2, estimate.CompleteDays);
+        Assert.Equal(new DateOnly(2025, 11, 24), estimate.From);
+        Assert.Equal(new DateOnly(2025, 11, 25), estimate.To);
+        Assert.Equal(3m, estimate.SavingsGbp);
+    }
+
+    [Fact]
+    public void EstimatedSavings_UsesCombinedUtilityAcrossGasToElectricityShift()
+    {
+        var daily = new[]
+        {
+            Point(new(2024, 12, 1), 5m, 0m, 5m, 5m, 0m, 5m),
+            Point(new(2025, 12, 1), 8m, 0m, 1m, 8m, 0m, 1m)
+        };
+        var config = new SolarAnalysisConfiguration(new(2025, 11, 24), SolarDetectionConfidence.High, "test", null, null);
+
+        var estimate = EnergyComparisonEngine.EstimateSolarSavings(daily, config, new(2025, 12, 2));
+
+        Assert.Equal(1m, estimate.SavingsGbp);
+    }
+
+    [Fact]
+    public void EstimatedSavings_PreservesBaselinePeakOffPeakShape()
+    {
+        var baseline = Point(new(2024, 12, 1), 10m, 0m, 0m, 3.08m, 0m, 0m) with
+        {
+            PeakImportKwh = 8m, OffPeakImportKwh = 2m, PeakImportCost = 2.40m, OffPeakImportCost = 0.14m,
+            PeakCostExact = true, OffPeakCostExact = true
+        };
+        var current = Point(new(2025, 12, 1), 10m, 0m, 0m, 1.16m, 0m, 0m) with
+        {
+            PeakImportKwh = 2m, OffPeakImportKwh = 8m, PeakImportCost = 0.60m, OffPeakImportCost = 0.56m,
+            PeakCostExact = true, OffPeakCostExact = true
+        };
+        var config = new SolarAnalysisConfiguration(new(2025, 11, 24), SolarDetectionConfidence.High, "test", null, null);
+
+        var estimate = EnergyComparisonEngine.EstimateSolarSavings([baseline, current], config, new(2025, 12, 2));
+
+        Assert.Equal(1.38m, estimate.SavingsGbp);
+    }
+
+    [Fact]
+    public void EstimatedSavings_RepricesBaselineConsumptionAtPostSolarTariff()
+    {
+        var daily = new[]
+        {
+            Point(new(2024, 12, 1), 5m, 0m, 5m, 1m, 0m, 1m),
+            Point(new(2025, 12, 1), 4m, 0m, 4m, 8m, 0m, 8m)
+        };
+        var config = new SolarAnalysisConfiguration(new(2025, 11, 24), SolarDetectionConfidence.High, "test", null, null);
+
+        var estimate = EnergyComparisonEngine.EstimateSolarSavings(daily, config, new(2025, 12, 2));
+
+        Assert.Equal(4m, estimate.SavingsGbp);
+    }
+
+    [Fact]
     public void HolidayMonths_AreExcludedOnlyWhenRequested()
     {
         var monthly = Insights(Point(new(2025, 5, 1), 20m, 0m, 0m, 5m, 0m, 0m), Point(new(2025, 6, 1), 100m, 0m, 0m, 25m, 0m, 0m), Point(new(2025, 9, 1), 50m, 10m, 0m, 12m, 1.5m, 0m));
@@ -110,25 +182,6 @@ public sealed class SolarAnalysisTests
         Assert.Equal(42.5m, Assert.Single(analysis.Metrics, value => value.Metric == "Average monthly gas usage").After);
     }
 
-    [Fact]
-    public async Task ProjectFoundation_StoresFutureCostStartAndAccumulatedBenefit()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"joakim-project-foundation-{Guid.NewGuid():N}.db");
-        try
-        {
-            var repository = new SqliteDashboardRepository(path); await repository.InitializeAsync();
-            await using (var connection = new SqliteConnection($"Data Source={path}"))
-            {
-                await connection.OpenAsync();
-                await using var insert = connection.CreateCommand(); insert.CommandText = "INSERT INTO energy_project_foundations(name,category,project_cost,start_date,accumulated_benefit,created_at,updated_at) VALUES('Loft insulation','Insulation',2500,'2026-01-15',125,'2026-01-01','2026-06-01')"; await insert.ExecuteNonQueryAsync();
-                await using var read = connection.CreateCommand(); read.CommandText = "SELECT project_cost,start_date,accumulated_benefit FROM energy_project_foundations";
-                await using var reader = await read.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
-                Assert.Equal(2500m, reader.GetDecimal(0)); Assert.Equal("2026-01-15", reader.GetString(1)); Assert.Equal(125m, reader.GetDecimal(2));
-            }
-            SqliteConnection.ClearAllPools();
-        }
-        finally { if (File.Exists(path)) File.Delete(path); }
-    }
 
     private static IReadOnlyList<MonthlyEnergyInsight> Insights(params EnergyPeriodPoint[] points) => EnergyInsightBuilder.BuildMonthly(points);
 

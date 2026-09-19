@@ -1,14 +1,12 @@
-# Build / IDE output
+# Build and IDE output
 bin/
 obj/
 .vs/
-.vscode/
-.idea/
 dist/
 artifacts/
 *.user
 
-# Runtime data and credentials
+# Local runtime data and secrets
 data/
 operationaldocs/
 .env
@@ -23,23 +21,16 @@ operationaldocs/
 *.p12
 *.pfx
 
-# Generated packages and logs
+# Packaged/generated output
 *.tar.gz
-*.tgz
 *.zip
 *.log
 *.tmp
 
-# Site-specific deployment files
-# Commit only sanitized *.example templates.
+# Explicitly private documentation patterns
+docs/private-*
+
+# Live site-specific deployment files; publish the .example versions instead
 deploy/add-octopus-rewrite.sh
 deploy/nginx-octopus-network.conf
 deploy/octopus.nginx
-
-# Private operational evidence
-docs/private-*
-docs/stage2-reconciliation.json
-docs/stage2-screenshots/
-
-# Vendored developer source maps
-*.map
