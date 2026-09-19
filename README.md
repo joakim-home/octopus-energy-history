@@ -4,6 +4,10 @@ A self-hosted ASP.NET Core dashboard for detailed Octopus Energy history, tariff
 
 The project is designed for people who want a local, auditable view of their household energy data rather than another cloud dashboard.
 
+## Dashboard preview
+
+![Octopus Energy Dashboard overview](docs/images/octopus-dashboard-overview.png)
+
 ## Highlights
 
 - Local SQLite history with raw supplier readings preserved.
