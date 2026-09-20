@@ -84,7 +84,7 @@ sudo systemctl stop octopus-energy-dashboard
 sudo -u octopus-energy \
   OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
   OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
-  /opt/octopus-energy-dashboard/JoakimHomeDashboard.Web --backfill-allocations
+  /opt/octopus-energy-dashboard/OctopusEnergyDashboard.Web --backfill-allocations
 sudo systemctl start octopus-energy-dashboard
 ```
 ## Development
@@ -93,9 +93,9 @@ Requirements: .NET 9 SDK.
 
 ```bash
 dotnet restore --configfile NuGet.Config
-dotnet build JoakimHomeDashboard.sln -c Release
-dotnet test JoakimHomeDashboard.sln -c Release
-dotnet run --project src/JoakimHomeDashboard.Web
+dotnet build OctopusEnergyDashboard.sln -c Release
+dotnet test OctopusEnergyDashboard.sln -c Release
+dotnet run --project src/OctopusEnergyDashboard.Web
 ```
 
 The executable schema lives in `DatabaseSchema.cs` plus the supplier-allocation schema in `SupplierAllocationStore.cs`.
