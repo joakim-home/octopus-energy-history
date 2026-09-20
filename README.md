@@ -77,16 +77,6 @@ It stores supplier `gbrCostOfUsage` allocation evidence separately, reconciles e
 
 If allocation evidence is missing or inconsistent, pricing fails closed: usage remains visible but the affected cost is unavailable.
 
-An explicit historical backfill is available:
-
-```bash
-sudo systemctl stop octopus-energy-dashboard
-sudo -u octopus-energy \
-  OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
-  OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
-  /opt/octopus-energy-dashboard/OctopusEnergyDashboard.Web --backfill-allocations
-sudo systemctl start octopus-energy-dashboard
-```
 ## Development
 
 Requirements: .NET 9 SDK.
