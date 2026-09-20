@@ -12,8 +12,8 @@ Public documentation shipped with Octopus Energy Dashboard:
 
 The executable database schema is defined in:
 
-- `src/JoakimHomeDashboard.Infrastructure/DatabaseSchema.cs`
-- `src/JoakimHomeDashboard.Infrastructure/SupplierAllocationStore.cs`
+- `src/OctopusEnergyDashboard.Infrastructure/DatabaseSchema.cs`
+- `src/OctopusEnergyDashboard.Infrastructure/SupplierAllocationStore.cs`
 
 Operational incident notes, populated databases, supplier responses, API keys,
 account identifiers and machine-specific deployment files are intentionally not part of the
