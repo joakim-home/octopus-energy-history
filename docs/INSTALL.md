@@ -43,7 +43,7 @@ For a pre-published build:
 sudo ./deploy/install.sh --publish-dir /path/to/published/linux-x64
 ```
 
-The publish directory must contain `JoakimHomeDashboard.Web`.
+The publish directory must contain `OctopusEnergyDashboard.Web`.
 ## Reverse proxy
 
 The application listens on `127.0.0.1:8080` by default. A basic nginx template is provided at:
@@ -92,7 +92,7 @@ sudo systemctl stop octopus-energy-dashboard
 sudo -u octopus-energy \
   OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
   OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
-  /opt/octopus-energy-dashboard/JoakimHomeDashboard.Web --reset-admin
+  /opt/octopus-energy-dashboard/OctopusEnergyDashboard.Web --reset-admin
 sudo systemctl start octopus-energy-dashboard
 ```
 
