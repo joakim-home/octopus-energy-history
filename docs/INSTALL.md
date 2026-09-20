@@ -83,6 +83,19 @@ sudo ./deploy/install.sh
 
 The application files are replaced. The database, administrator account and secret key in `/var/lib/octopus-energy-dashboard` are preserved.
 
+## Historical allocation backfill
+
+If four-rate supplier allocation history needs to be rebuilt explicitly:
+
+```bash
+sudo systemctl stop octopus-energy-dashboard
+sudo -u octopus-energy \
+  OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
+  OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
+  /opt/octopus-energy-dashboard/OctopusEnergyDashboard.Web --backfill-allocations
+sudo systemctl start octopus-energy-dashboard
+```
+
 ## Administrator recovery
 
 If the local administrator password is lost, reset the account from the host shell:
