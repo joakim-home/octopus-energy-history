@@ -11,6 +11,7 @@ The project is designed for people who want a local, auditable view of their hou
 ## Highlights
 
 - Local SQLite history with raw supplier readings preserved.
+- Supplier daily gas measurements are used to correct legacy volumetric gas history without rewriting raw evidence.
 - Electricity import/export, gas and standing charges in one dashboard.
 - Exact/partial cost state: missing tariff evidence stays unavailable rather than being guessed.
 - Intelligent Octopus Go four-rate allocation using supplier-calculated `gbrCostOfUsage` evidence.
@@ -76,6 +77,25 @@ For supported four-rate import periods, the dashboard does not infer EV/home all
 It stores supplier `gbrCostOfUsage` allocation evidence separately, reconciles each interval against the imported meter reading, and only promotes reconciled allocations into the effective cost view.
 
 If allocation evidence is missing or inconsistent, pricing fails closed: usage remains visible but the affected cost is unavailable.
+
+An explicit historical backfill is available:
+
+```bash
+sudo systemctl stop octopus-energy-dashboard
+sudo -u octopus-energy \
+  OCTOPUS_DATA_PATH=/var/lib/octopus-energy-dashboard/dashboard.db \
+  OCTOPUS_SECRET_KEY_PATH=/var/lib/octopus-energy-dashboard/secret.key \
+  /opt/octopus-energy-dashboard/OctopusEnergyDashboard.Web --backfill-allocations
+sudo systemctl start octopus-energy-dashboard
+```
+
+## Gas history correction
+
+Some Octopus gas consumption feeds expose interval quantities in cubic metres even though tariff pricing is in kWh. Older imports can therefore be internally consistent but understate both gas usage and cost by roughly the m³-to-kWh conversion factor.
+
+The dashboard keeps `octopus_raw_readings` immutable and applies gas corrections in a derived evidence layer. Supplier daily `GAS_CONSUMPTION` measurements are preferred because they provide the supplier's own kWh total for each day; where exact supplier measurements are unavailable, the migration layer can preserve an explicit fixed-factor fallback for legacy history. Corrected readings are then used by effective views and rollups without altering the original supplier payload.
+
+Schema v13 adds `octopus_gas_daily_measurements` and `octopus_gas_quantity_corrections` for this purpose. Existing installations migrate automatically on startup.
 
 ## Development
 

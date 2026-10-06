@@ -85,12 +85,12 @@ if [[ -z "$PUBLISH_DIR" ]]; then
     exit 1
   fi
   echo "Publishing self-contained linux-x64 application..."
-  dotnet publish "$REPO_ROOT/src/JoakimHomeDashboard.Web/JoakimHomeDashboard.Web.csproj" \
+  dotnet publish "$REPO_ROOT/src/OctopusEnergyDashboard.Web/OctopusEnergyDashboard.Web.csproj" \
     -c Release -r linux-x64 --self-contained true -o "$TMP_DIR/publish" --nologo
   PUBLISH_DIR="$TMP_DIR/publish"
 fi
 
-if [[ ! -f "$PUBLISH_DIR/JoakimHomeDashboard.Web" ]]; then
+if [[ ! -f "$PUBLISH_DIR/OctopusEnergyDashboard.Web" ]]; then
   echo "Published application not found in: $PUBLISH_DIR" >&2
   exit 1
 fi
@@ -110,7 +110,7 @@ fi
 rm -rf "$APP_DIR"/*
 cp -a "$PUBLISH_DIR"/. "$APP_DIR"/
 chown -R root:root "$APP_DIR"
-chmod 0755 "$APP_DIR/JoakimHomeDashboard.Web"
+chmod 0755 "$APP_DIR/OctopusEnergyDashboard.Web"
 
 cat >"$ENV_FILE" <<EOF
 ASPNETCORE_URLS=http://127.0.0.1:$PORT
@@ -132,7 +132,7 @@ User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
-ExecStart=$APP_DIR/JoakimHomeDashboard.Web
+ExecStart=$APP_DIR/OctopusEnergyDashboard.Web
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

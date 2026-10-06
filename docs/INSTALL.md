@@ -96,6 +96,12 @@ sudo -u octopus-energy \
 sudo systemctl start octopus-energy-dashboard
 ```
 
+## Gas history migration
+
+Schema v13 adds a derived gas-correction layer for legacy history that was stored as volumetric readings. The original `octopus_raw_readings` remain unchanged. On startup, supplier daily gas measurements are used where available to establish the effective kWh totals and derived costs; the corrected effective view is then used for rollups and charts.
+
+No manual database rewrite is required. Back up both `dashboard.db` and `secret.key` before upgrading, as with any schema migration.
+
 ## Administrator recovery
 
 If the local administrator password is lost, reset the account from the host shell:
