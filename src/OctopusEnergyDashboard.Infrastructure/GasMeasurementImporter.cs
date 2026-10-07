@@ -29,7 +29,7 @@ public sealed class GasMeasurementImporter(IDashboardRepository repository, IOct
             if (meters.Length == 0) return new(Name, true, 0, "No gas meter is configured.");
 
             var token = await TokenAsync(key, cancellationToken);
-            var appliedDays = 0; var correctedIntervals = 0; var warnings = new List<string>();
+            var appliedDays = 0; var correctedIntervals = 0; var warnings = new List<string>(); var notes = new List<string>();
             foreach (var meter in meters)
             {
                 var meterDays = 0;
@@ -66,14 +66,15 @@ public sealed class GasMeasurementImporter(IDashboardRepository repository, IOct
                 {
                     var remaining = await store.FirstMissingGasMeasurementDayAsync(meter.MeterPoint, cancellationToken);
                     if (remaining is not null && remaining.Value <= range.Value.To)
-                        warnings.Add($"{meter.MeterPoint}: supplier daily kWh coverage is still incomplete from {remaining.Value:yyyy-MM-dd}. Uncorrected raw gas remains preserved rather than guessed.");
+                        notes.Add($"{meter.MeterPoint}: supplier daily kWh coverage is incomplete from {remaining.Value:yyyy-MM-dd}; existing derived correction evidence remains in use for uncovered history.");
                 }
             }
             if (repository is IOctopusReadingStore readings) await readings.RebuildOctopusRollupsAsync(cancellationToken);
-            return new(Name, warnings.Count == 0, correctedIntervals,
-                warnings.Count == 0
-                    ? $"Supplier gas measurements applied: {appliedDays} day(s), {correctedIntervals} raw interval(s) corrected without changing raw meter evidence."
-                    : $"Supplier gas measurements incomplete. {string.Join(" ", warnings)}");
+            var message = warnings.Count == 0
+                ? $"Supplier gas measurements applied: {appliedDays} day(s), {correctedIntervals} raw interval(s) corrected without changing raw meter evidence."
+                : $"Supplier gas measurements incomplete. {string.Join(" ", warnings)}";
+            if (notes.Count > 0) message += " " + string.Join(" ", notes);
+            return new(Name, warnings.Count == 0, correctedIntervals, message);
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException or FormatException or KeyNotFoundException)
         {
