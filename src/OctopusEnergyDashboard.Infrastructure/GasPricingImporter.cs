@@ -14,7 +14,7 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
 
     public async Task<SyncResult> SyncAsync(CancellationToken cancellationToken=default)
     {
-        var ct=cancellationToken; int expected=0, priced=0; string? token=null;
+        var ct=cancellationToken; int expected=0, priced=0, paymentEvidenceMissing=0, agreementAmbiguous=0, rateAmbiguous=0; string? token=null;
         var key=await repository.GetSettingAsync(SettingKeys.OctopusApiKey,ct) ?? "";
         var tariffs=(await configuration.GetOctopusTariffPeriodsAsync(ct)).Where(t=>t.FuelType=="gas").ToArray();
         var rateCache=new Dictionary<(string Product,string Tariff),(List<GasRate> Rates,string Metadata,string[] Pages)>();
@@ -32,13 +32,16 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
                     using var auth=JsonDocument.Parse(await GraphqlAsync("mutation($key:String!){obtainKrakenToken(input:{APIKey:$key}){token}}",new {key},null,ct));
                     token=auth.RootElement.GetProperty("data").GetProperty("obtainKrakenToken").GetProperty("token").GetString();
                 }
-                var account=meter.Select(t=>t.AccountNumber).Distinct().ToArray(); if(account.Length!=1) continue;
+                var account=meter.Select(t=>t.AccountNumber).Distinct().ToArray();
+                if(account.Length!=1) { agreementAmbiguous+=candidates.Length; continue; }
                 var payment=await GraphqlAsync(PaymentQuery,new {account=account[0],date=day.Key},token,ct);
-                var method=ResolvePaymentMethod(payment); if(method is null) continue;
+                var method=ResolvePaymentMethod(payment);
+                if(method is null) { paymentEvidenceMissing+=candidates.Length; continue; }
                 foreach(var candidate in candidates)
                 {
                     var row=candidate.Row; var agreements=candidate.Agreements;
-                    if(agreements.Length!=1) continue; var agreement=agreements[0];
+                    if(agreements.Length!=1) { agreementAmbiguous++; continue; }
+                    var agreement=agreements[0];
                     var cacheKey=(agreement.ProductCode,agreement.TariffCode);
                     if(!rateCache.TryGetValue(cacheKey,out var cache))
                     {
@@ -63,7 +66,7 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
                         cache=(rates,metadata,pages.ToArray()); rateCache[cacheKey]=cache;
                     }
                     var matches=cache.Rates.Where(r=>!r.Standing&&row.Start>=r.From&&row.End<=r.To&&(r.Method is null||r.Method==method)).Distinct().ToArray();
-                    if(matches.Length!=1) continue;
+                    if(matches.Length!=1) { rateAmbiguous++; continue; }
                     var evidence=JsonSerializer.Serialize(new {payment,metadata=cache.Metadata,ratePages=cache.Pages,taxBasis="value_inc_vat",provenance="supplier_tariff_calculation"});
                     await store.SaveGasPriceAsync(row,matches[0].Rate,method,agreement.TariffCode,evidence,ct); priced++;
                     var date=DateOnly.Parse(day.Key); var midnight=date.ToDateTime(TimeOnly.MinValue);
@@ -73,7 +76,11 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
                         await readingStore.InsertMissingOctopusStandingChargesAsync([new(date,meter.Key,agreement.TariffCode,standing[0].Rate/100m)],ct);
                 }
             }
-            return new(Name,expected==priced,priced,expected==priced?$"Gas pricing reconciled: {priced}/{expected} previously unpriced intervals.":$"Gas pricing pending: {expected-priced} intervals have no unambiguous main-ledger payment schedule, agreement or dated rate. No price was guessed.");
+            var pending=expected-priced;
+            var detail=pending==0 ? "" : $" Breakdown: payment evidence={paymentEvidenceMissing}, agreement={agreementAmbiguous}, dated rate={rateAmbiguous}.";
+            return new(Name,expected==priced,priced,expected==priced
+                ? $"Gas pricing reconciled: {priced}/{expected} previously unpriced intervals."
+                : $"Gas pricing pending: {pending} intervals remain unpriced.{detail} No price was guessed.");
         }
         finally { if(repository is IOctopusReadingStore readings) await readings.RebuildOctopusRollupsAsync(ct); }
     }
@@ -94,8 +101,14 @@ public sealed class GasPricingImporter(IDashboardRepository repository, IOctopus
         var schedules=account.GetProperty("paymentSchedules"); if(schedules.GetProperty("pageInfo").GetProperty("hasNextPage").GetBoolean()) return null;
         var applicable=schedules.GetProperty("edges").EnumerateArray().Select(e=>e.GetProperty("node"))
             .Where(s=>s.GetProperty("ledgerNumber").GetString()==main[0]&&s.GetProperty("reason").GetString()=="GENERAL_ACCOUNT_PAYMENT").ToArray();
-        if(applicable.Length!=1) return null;
-        return applicable[0].GetProperty("scheduleType").GetString() switch { "DIRECT_DEBIT"=>"DIRECT_DEBIT", "BACS_TRANSFER"=>"NON_DIRECT_DEBIT", _=>null };
+        if(applicable.Length==0) return null;
+        var methods=applicable.Select(s=>s.GetProperty("scheduleType").GetString() switch
+            {
+                "DIRECT_DEBIT"=>"DIRECT_DEBIT",
+                "BACS_TRANSFER"=>"NON_DIRECT_DEBIT",
+                _=>null
+            }).Distinct().ToArray();
+        return methods.Length==1 ? methods[0] : null;
     }
 
     private async Task<string> GetAsync(Uri uri,string key,CancellationToken ct)
