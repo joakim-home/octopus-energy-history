@@ -34,6 +34,14 @@ public sealed class GasPaymentEvidenceTests
         => Assert.Null(GasPricingImporter.ResolvePaymentMethod(Evidence(false, (method, "main-demo", reason))));
 
     [Fact]
+    public void MultipleMainLedgerSchedulesWithSameMethodRemainUnambiguous()
+    {
+        Assert.Equal("DIRECT_DEBIT", GasPricingImporter.ResolvePaymentMethod(Evidence(false,
+            ("DIRECT_DEBIT", "main-demo", "GENERAL_ACCOUNT_PAYMENT"),
+            ("DIRECT_DEBIT", "main-demo", "GENERAL_ACCOUNT_PAYMENT"))));
+    }
+
+    [Fact]
     public void PartialPaginationAndConflictingSchedulesRemainUnavailable()
     {
         Assert.Null(GasPricingImporter.ResolvePaymentMethod(Evidence(true, ("DIRECT_DEBIT", "main-demo", "GENERAL_ACCOUNT_PAYMENT"))));
