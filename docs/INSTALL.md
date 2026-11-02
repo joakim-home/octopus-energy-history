@@ -58,6 +58,19 @@ Home Assistant iframe embedding is deliberately not enabled in the generic templ
 
 The dashboard has built-in authentication, but the reverse proxy should still provide HTTPS before the service is exposed beyond a trusted private network.
 
+## Payment-method rates
+
+Octopus can return two standing-charge prices for the same tariff and dates, distinguished by `payment_method`. Select the method **actually billed** on your account; do not assume the lowest rate. For example, if you pay by direct debit:
+
+```ini
+[Service]
+Environment=OCTOPUS_PAYMENT_METHOD=DIRECT_DEBIT
+```
+
+Add this via `sudo systemctl edit octopus-energy-dashboard` (or your existing service name, such as `octopus`) and then run `sudo systemctl daemon-reload && sudo systemctl restart <service-name>`. Use `NON_DIRECT_DEBIT` instead when applicable. If neither is configured and the supplier returns both, pricing fails closed and reports the ambiguity; meter readings remain untouched.
+
+Supplier four-rate allocation adjustments can include negative band amounts. These are allowed only when the supplier interval quantities and costs are internally consistent **and** the signed band totals reconcile with the original meter imports.
+
 ## Service management
 
 ```bash

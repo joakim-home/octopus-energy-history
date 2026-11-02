@@ -29,6 +29,34 @@ public sealed class OctopusTariffLifecycleTests
     }
 
     [Fact]
+    public void StandingChargesUseExplicitSupplierPaymentMethod()
+    {
+        var start = DateTimeOffset.Parse("2026-09-30T23:00:00Z");
+        var json = JsonSerializer.Serialize(new
+        {
+            next = (string?)null,
+            results = new[]
+            {
+                new { valid_from = start, valid_to = (DateTimeOffset?)null, value_inc_vat = 28.45542m, payment_method = "DIRECT_DEBIT" },
+                new { valid_from = start, valid_to = (DateTimeOffset?)null, value_inc_vat = 32.843265m, payment_method = "NON_DIRECT_DEBIT" }
+            }
+        });
+        var rates = OctopusResponseParser.ParseRatePage(json).Rates;
+        Assert.Equal(2, rates.Count);
+        Assert.Empty(OctopusResponseParser.SelectRatesForPaymentMethod(rates, null)); // Fail closed on ambiguous prices.
+        Assert.Empty(OctopusResponseParser.SelectRatesForPaymentMethod(rates, "UNKNOWN"));
+        var directDebit = Assert.Single(OctopusResponseParser.SelectRatesForPaymentMethod(rates, "DIRECT_DEBIT"));
+        Assert.Equal(28.45542m, directDebit.PencePerKwh);
+        Assert.Equal("DIRECT_DEBIT", directDebit.PaymentMethod);
+        var nonDirectDebit = Assert.Single(OctopusResponseParser.SelectRatesForPaymentMethod(rates, "NON_DIRECT_DEBIT"));
+        Assert.Equal(32.843265m, nonDirectDebit.PencePerKwh);
+
+        var untagged = new[] { new OctopusRate(start, DateTimeOffset.MaxValue, 28.45542m) };
+        Assert.Single(OctopusResponseParser.SelectRatesForPaymentMethod(untagged, null));
+        Assert.Empty(OctopusResponseParser.SelectRatesForPaymentMethod([untagged[0], directDebit], "DIRECT_DEBIT"));
+    }
+
+    [Fact]
     public void UnknownTariffAndUntrustedEndpointFailClosed()
     {
         var json = OctopusMetadataFixture.Json("PRODUCT", "TARIFF");

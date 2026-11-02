@@ -27,6 +27,10 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
         try
         {
             var settings = await LoadSettings(cancellationToken);
+            // Never guess between different Octopus payment-method tariffs.
+            var paymentMethod = Environment.GetEnvironmentVariable("OCTOPUS_PAYMENT_METHOD")?.Trim().ToUpperInvariant();
+            if (!string.IsNullOrEmpty(paymentMethod) && paymentMethod is not ("DIRECT_DEBIT" or "NON_DIRECT_DEBIT"))
+                throw new InvalidOperationException("OCTOPUS_PAYMENT_METHOD must be DIRECT_DEBIT or NON_DIRECT_DEBIT.");
             if (string.IsNullOrWhiteSpace(settings.ApiKey)) throw new InvalidOperationException("Configure the Octopus API key first.");
             await readingStore.PrepareGasQuantityCorrectionsAsync(settings.GasCubicMetres, cancellationToken);
             var meters = (await configurationStore.GetOctopusMeterPointsAsync(cancellationToken)).ToList();
@@ -134,7 +138,10 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                                 pricingWarnings.Add($"{period.TariffCode}: product metadata has no {relation} endpoint.");
                                 return [];
                             }
-                            var result = await LoadRates(endpoint, settings.ApiKey, endpointFrom, endpointTo, cancellationToken);
+                            var supplied = await LoadRates(endpoint, settings.ApiKey, endpointFrom, endpointTo, cancellationToken);
+                            var result = OctopusResponseParser.SelectRatesForPaymentMethod(supplied, paymentMethod);
+                            if (supplied.Count > 0 && result.Count == 0)
+                                pricingWarnings.Add($"{period.TariffCode}: {relation} has ambiguous or unmatched payment-method rates. Set OCTOPUS_PAYMENT_METHOD to the billed method.");
                             if (result.Count == 0) pricingWarnings.Add($"{period.TariffCode}: {relation} returned HTTP success with an empty rate collection for the requested period.");
                             return result;
                         }
@@ -294,7 +301,7 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
 }
 
 public sealed record OctopusInterval(DateTimeOffset Start, DateTimeOffset End, decimal ConsumptionKwh);
-public sealed record OctopusRate(DateTimeOffset Start, DateTimeOffset End, decimal PencePerKwh, string TariffCode = "", OctopusProductSemantics Semantics = OctopusProductSemantics.StandardIntervalRates);
+public sealed record OctopusRate(DateTimeOffset Start, DateTimeOffset End, decimal PencePerKwh, string TariffCode = "", OctopusProductSemantics Semantics = OctopusProductSemantics.StandardIntervalRates, string? PaymentMethod = null);
 public sealed record OctopusPage(IReadOnlyList<OctopusInterval> Intervals, string? Next);
 public sealed record OctopusRatePage(IReadOnlyList<OctopusRate> Rates, string? Next);
 
@@ -314,8 +321,23 @@ public static class OctopusResponseParser
     public static OctopusRatePage ParseRatePage(string json)
     {
         using var document = JsonDocument.Parse(json); var rates = new List<OctopusRate>();
-        foreach (var item in document.RootElement.GetProperty("results").EnumerateArray()) rates.Add(new(item.GetProperty("valid_from").GetDateTimeOffset(), item.TryGetProperty("valid_to", out var end) && end.ValueKind == JsonValueKind.String ? end.GetDateTimeOffset() : DateTimeOffset.MaxValue, item.GetProperty("value_inc_vat").GetDecimal()));
+        foreach (var item in document.RootElement.GetProperty("results").EnumerateArray()) rates.Add(new(
+            item.GetProperty("valid_from").GetDateTimeOffset(),
+            item.TryGetProperty("valid_to", out var end) && end.ValueKind == JsonValueKind.String ? end.GetDateTimeOffset() : DateTimeOffset.MaxValue,
+            item.GetProperty("value_inc_vat").GetDecimal(),
+            PaymentMethod: item.TryGetProperty("payment_method", out var method) && method.ValueKind == JsonValueKind.String ? method.GetString() : null));
         return new(rates, document.RootElement.TryGetProperty("next",out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null);
+    }
+
+    public static List<OctopusRate> SelectRatesForPaymentMethod(IReadOnlyList<OctopusRate> rates, string? paymentMethod)
+    {
+        if (rates.Count == 0) return [];
+        var tagged = rates.Where(rate => !string.IsNullOrWhiteSpace(rate.PaymentMethod)).ToArray();
+        if (tagged.Length == 0) return rates.ToList(); // Legacy endpoint with no payment-method dimension.
+        if (tagged.Length != rates.Count) return []; // Mixed tagged and untagged evidence is ambiguous.
+        var methods = tagged.Select(rate => rate.PaymentMethod!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (string.IsNullOrWhiteSpace(paymentMethod)) return methods.Length == 1 ? tagged.ToList() : [];
+        return tagged.Where(rate => string.Equals(rate.PaymentMethod, paymentMethod, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
     public static IReadOnlyList<DailyEnergyReading> ToDaily(IEnumerable<OctopusInterval> intervals, EnergyFlowType flow, IReadOnlyCollection<OctopusRate> rates, IReadOnlyCollection<OctopusRate>? standingCharges = null, decimal quantityMultiplier = 1m, string tariffCode = "")

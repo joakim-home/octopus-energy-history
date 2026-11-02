@@ -25,6 +25,76 @@ public sealed class SupplierAllocationTests
     }
 
     [Fact]
+    public async Task SignedSupplierCorrectionReconcilesAgainstUnchangedMeterImport()
+    {
+        // Real-world pattern from 2026-10-31: a negative home-night correction
+        // is offset by EV/home reallocation while net meter import stays positive.
+        var supplier = new[]
+        {
+            new { Band = "ECO7_DAY", Quantity = 0m, Rate = 34.264m },
+            new { Band = "ECO7_NIGHT", Quantity = -0.899m, Rate = 6.6m },
+            new { Band = "EV_DEVICE_OFF_PEAK", Quantity = 0.899m, Rate = 6.6m },
+            new { Band = "EV_DEVICE_PEAK", Quantity = 0.899m, Rate = 34.264m }
+        };
+        var json = JsonSerializer.Serialize(new
+        {
+            data = new
+            {
+                gbrCostOfUsage = new
+                {
+                    periods = new[]
+                    {
+                        new
+                        {
+                            totalConsumption = 0.899m,
+                            totalCost = supplier.Sum(b => b.Quantity * b.Rate),
+                            consumptionUnit = "kilowatt_hour",
+                            currency = "GBP_PENCE",
+                            intervals = supplier.Select(b => new
+                            {
+                                period = new { start = Boundary, end = Boundary.AddMinutes(30) },
+                                consumption = b.Quantity,
+                                consumptionUnit = "kilowatt_hour",
+                                currency = "GBP_PENCE",
+                                rateApplied = b.Rate,
+                                cost = b.Quantity * b.Rate,
+                                bandSubcategory = b.Band
+                            }).ToArray()
+                        }
+                    }
+                }
+            }
+        });
+        var rates = new[]
+        {
+            new SupplierTaxRate("ECO7_DAY", Boundary, Boundary.AddHours(1), 34.264m, 35.9772m),
+            new SupplierTaxRate("ECO7_NIGHT", Boundary, Boundary.AddHours(1), 6.6m, 6.93m),
+            new SupplierTaxRate("EV_DEVICE_OFF_PEAK", Boundary, Boundary.AddHours(1), 6.6m, 6.93m),
+            new SupplierTaxRate("EV_DEVICE_PEAK", Boundary, Boundary.AddHours(1), 34.264m, 35.9772m)
+        };
+        var allocations = SupplierAllocationImporter.Parse(json, rates);
+        Assert.Equal(4, allocations.Count);
+        Assert.Equal(-0.899m, allocations.Single(a => a.Band == "ECO7_NIGHT").Quantity);
+
+        using var f = await Fixture.Create();
+        await f.Repository.UpsertOctopusRawReadingsAsync([
+            new(Boundary, Boundary.AddMinutes(30), EnergyFlowType.ElectricityImport, 0.899m, 99m, "IMP", "M1", "FOUR", "signed-fixture")
+        ]);
+        var before = await f.Raw();
+        var readings = await f.Store.ReadingsAsync(Tariff);
+        Assert.Equal("reconciled", Assert.Single(SupplierAllocationStore.Reconcile(readings, allocations)).Status);
+        Assert.Equal("quantity_mismatch", Assert.Single(SupplierAllocationStore.Reconcile(
+            [readings[0] with { Quantity = 1m }], allocations)).Status);
+
+        Assert.Equal(1, await f.Store.SaveAsync(Tariff, readings, allocations, json));
+        await f.Repository.RebuildOctopusRollupsAsync();
+        var month = Assert.Single((await f.Repository.GetEnergyDashboardAsync()).Monthly);
+        Assert.True(month.ImportCostExact);
+        Assert.Equal(0.899m, month.ImportKwh);
+        Assert.Equal(before, await f.Raw()); // Never rewrite raw supplier meter history.
+    }
+
+    [Fact]
     public void TaxEvidenceMustCoverIntervalAndMatchAppliedRate()
     {
         Assert.Throws<InvalidOperationException>(()=>SupplierAllocationImporter.Parse(Response(22),[new("ECO7_DAY",Boundary,Boundary.AddDays(1),20,21)]));

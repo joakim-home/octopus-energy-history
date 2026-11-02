@@ -218,7 +218,7 @@ public sealed class SupplierAllocationStore(string databasePath)
         {
             var found = groups.GetValueOrDefault((r.Start, r.End)) ?? [];
             var sum = found.Sum(a => a.Quantity);
-            var status = found.Length == 0 ? "missing_allocation" : found.Any(a => !Bands.Contains(a.Band) || a.Quantity < 0) ? "invalid_band"
+            var status = found.Length == 0 ? "missing_allocation" : found.Any(a => !Bands.Contains(a.Band)) ? "invalid_band"
                 : found.Select(a => a.Band).Distinct().Count() != found.Length ? "duplicate_band"
                 : readings.Count(x => x.Start == r.Start && x.End == r.End) != 1 ? "ambiguous_meter"
                 : Math.Abs(sum - r.Quantity) > QuantityTolerance ? "quantity_mismatch" : "reconciled";

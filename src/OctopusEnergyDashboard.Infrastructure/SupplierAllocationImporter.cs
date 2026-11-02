@@ -113,7 +113,8 @@ public sealed class SupplierAllocationImporter(IDashboardRepository repository, 
                 if(!SupplierAllocationStore.Bands.Contains(band)||a.GetProperty("consumptionUnit").GetString()!="kilowatt_hour"||a.GetProperty("currency").GetString()!="GBP_PENCE") throw new InvalidOperationException("Unrecognised allocation band or units.");
                 var start=a.GetProperty("period").GetProperty("start").GetDateTimeOffset(); var end=a.GetProperty("period").GetProperty("end").GetDateTimeOffset();
                 var quantity=Decimal(a.GetProperty("consumption")); var rate=Decimal(a.GetProperty("rateApplied")); var cost=Decimal(a.GetProperty("cost"));
-                if(end<=start||quantity<0||Math.Abs(quantity*rate-cost)>0.00001m) throw new InvalidOperationException("Supplier interval quantity/rate/cost inconsistency.");
+                // Signed supplier corrections are valid when their interval net is reconciled to the meter.
+                if(end<=start||Math.Abs(quantity*rate-cost)>0.00001m) throw new InvalidOperationException("Supplier interval quantity/rate/cost inconsistency.");
                 var candidates=rates.Where(r=>r.Band==band&&start>=r.From&&end<=r.To).Distinct().ToArray();
                 if(candidates.Length!=1) throw new InvalidOperationException("Tax evidence missing or ambiguous.");
                 var tax=candidates[0];
