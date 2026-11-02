@@ -50,6 +50,8 @@ Timezone:    Europe/London
 Then put nginx, Caddy, or another trusted reverse proxy in front of the localhost listener for LAN access.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for full installation, upgrade, reverse-proxy and uninstall instructions.
+
+**Payment-method tariff rates:** Some Octopus products publish different `DIRECT_DEBIT` and `NON_DIRECT_DEBIT` rates for the same interval. Set `OCTOPUS_PAYMENT_METHOD=DIRECT_DEBIT` (or `NON_DIRECT_DEBIT` if that is the actual billed payment method) in the service environment. When both methods are present and no selection is configured, the dashboard deliberately leaves charges unpriced. The original supplier evidence remains intact.
 ## First setup
 
 Open the dashboard through your trusted LAN/reverse-proxy URL.
