@@ -81,8 +81,8 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                 var periods = PeriodsFor(tariffPeriods, meter);
                 if (periods.Length == 0 && !string.IsNullOrWhiteSpace(meter.TariffCode)) periods = [new(meter.AccountNumber,meter.PropertyId,meter.FuelType,meter.IsExport,meter.MeterPoint,meter.TariffCode,meter.ProductCode,meter.ValidFrom,meter.ValidTo)];
                 var from = latest?.AddDays(-2) ?? new DateTimeOffset(2010, 1, 1, 0, 0, 0, TimeSpan.Zero);
-                // The normal two-day cursor cannot recover older missing days. Revisit only
-                // wholly absent days in the recent reporting window; inserts remain idempotent.
+                // The normal two-day cursor cannot recover older missing or partial days.
+                // Revisit incomplete UK-local intervals without overwriting history.
                 var earliestExpected = completenessWindow.From;
                 if (meter.ValidFrom is not null)
                 {
@@ -90,18 +90,25 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                         meter.ValidFrom.Value, TimeZoneInfo.FindSystemTimeZoneById("Europe/London")).DateTime);
                     if (activationDate > earliestExpected) earliestExpected = activationDate;
                 }
-                var missingDay = await readingStore.GetEarliestMissingOctopusDayAsync(
-                    meter.MeterPoint, meter.MeterSerial, flow,
-                    earliestExpected, completenessWindow.ToExclusive, cancellationToken);
-                if (missingDay is not null)
+                var latestExpected = completenessWindow.ToExclusive;
+                if (meter.ValidTo is not null)
                 {
-                    // Include the preceding UTC day for the BST boundary; historical
-                    // consumption is insert-only, so this overlap cannot overwrite readings.
-                    var recoveryFrom = new DateTimeOffset(missingDay.Value.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+                    var retirementDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+                        meter.ValidTo.Value, TimeZoneInfo.FindSystemTimeZoneById("Europe/London")).DateTime);
+                    if (retirementDate < latestExpected) latestExpected = retirementDate;
+                }
+                var incompleteDay = await readingStore.GetEarliestIncompleteOctopusDayAsync(
+                    meter.MeterPoint, meter.MeterSerial, flow,
+                    earliestExpected, latestExpected, cancellationToken);
+                if (incompleteDay is not null)
+                {
+                    // Include the preceding UTC day for the BST boundary. The
+                    // ingestion remains insert-only for already stored intervals.
+                    var recoveryFrom = new DateTimeOffset(incompleteDay.Value.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
                     if (recoveryFrom < from)
                     {
                         from = recoveryFrom;
-                        historicalGapRetries.Add($"{flow} {missingDay.Value:dd MMM yyyy}");
+                        historicalGapRetries.Add($"{flow} {incompleteDay.Value:dd MMM yyyy}");
                     }
                 }
 
@@ -198,7 +205,7 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
             var message = imported == 0 ? "No new Octopus readings were available." : $"Imported {imported:N0} raw readings from {meters.Count} meter configuration(s).";
             message += " Existing consumption and historical interval pricing were preserved; historical repricing is disabled.";
             if(unavailableTariffs.Count>0) message += $" Exact rate endpoints were unavailable for {unavailableTariffs.Count} historical tariff(s); their usage remains visible without cost.";
-            if (historicalGapRetries.Count > 0) message += $" Retried recent missing-day backfill: {string.Join(", ", historicalGapRetries)}.";
+            if (historicalGapRetries.Count > 0) message += $" Retried recent incomplete-day backfill: {string.Join(", ", historicalGapRetries)}.";
             if (pricingWarnings.Count > 0) message += " " + string.Join(" ", pricingWarnings);
             return new(Name, true, imported, message, importedFrom, importedTo);
         }
