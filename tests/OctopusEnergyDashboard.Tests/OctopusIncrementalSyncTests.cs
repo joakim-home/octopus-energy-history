@@ -43,15 +43,11 @@ public sealed class OctopusIncrementalSyncTests
             var seeded = Enumerable.Range(0, window.ExpectedDays)
                 .Select(offset => window.From.AddDays(offset))
                 .Where(day => day != missingDay)
-                .Select(day =>
-                {
-                    var start = new DateTimeOffset(day.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-                    return new OctopusRawReading(start, start.AddMinutes(30), EnergyFlowType.ElectricityImport,
-                        0.5m, null, meter.MeterPoint, meter.MeterSerial, "", $"seed-{day:yyyyMMdd}");
-                }).ToArray();
+                .SelectMany(day => DailyIntervals(day, EnergyFlowType.ElectricityImport,
+                    meter.MeterPoint, meter.MeterSerial)).ToArray();
             await repository.UpsertOctopusRawReadingsAsync(seeded);
 
-            Assert.Equal(missingDay, await repository.GetEarliestMissingOctopusDayAsync(
+            Assert.Equal(missingDay, await repository.GetEarliestIncompleteOctopusDayAsync(
                 meter.MeterPoint, meter.MeterSerial, EnergyFlowType.ElectricityImport,
                 window.From, window.ToExclusive));
             var latestBefore = await repository.GetLatestOctopusReadingAsync(
@@ -67,9 +63,72 @@ public sealed class OctopusIncrementalSyncTests
                 Assert.Single(handler.PeriodFrom), StringComparison.Ordinal);
             Assert.Equal(latestBefore, await repository.GetLatestOctopusReadingAsync(
                 meter.MeterPoint, meter.MeterSerial, EnergyFlowType.ElectricityImport));
-            Assert.Contains("Retried recent missing-day backfill", result.Message, StringComparison.Ordinal);
+            Assert.Contains("Retried recent incomplete-day backfill", result.Message, StringComparison.Ordinal);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task PartialGasDay_RetriesMissingIntervalsWithoutRewritingTheOthers()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"octopus-partial-gas-{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector());
+            await repository.InitializeAsync();
+            var day = new DateOnly(2026, 10, 29);
+            var readings = Enumerable.Range(0, 3)
+                .Select(offset => day.AddDays(offset - 1))
+                .SelectMany(date => DailyIntervals(date, EnergyFlowType.Gas, "GAS-METER", "SERIAL")
+                    .Where((_, index) => date != day || index is not (10 or 11 or 12)))
+                .ToArray();
+            await repository.UpsertOctopusRawReadingsAsync(readings);
+            Assert.Equal(day, await repository.GetEarliestIncompleteOctopusDayAsync(
+                "GAS-METER", "SERIAL", EnergyFlowType.Gas,
+                day.AddDays(-1), day.AddDays(2)));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task BstDay_ExpectsFiftyReadingsNotFortyEight()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"octopus-bst-gap-{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new SqliteDashboardRepository(path, new TestSecretProtector());
+            await repository.InitializeAsync();
+            var changeDay = new DateOnly(2026, 10, 25);
+            var readings = Enumerable.Range(0, 3)
+                .Select(offset => changeDay.AddDays(offset - 1))
+                .SelectMany(date => DailyIntervals(date, EnergyFlowType.ElectricityImport,
+                    "IMPORT-METER", "SERIAL")
+                    .Where((_, index) => date != changeDay || index != 12))
+                .ToArray();
+            await repository.UpsertOctopusRawReadingsAsync(readings);
+            Assert.Equal(49, readings.Count(reading =>
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+                    reading.PeriodStart, TimeZoneInfo.FindSystemTimeZoneById("Europe/London")).DateTime) == changeDay));
+            Assert.Equal(changeDay, await repository.GetEarliestIncompleteOctopusDayAsync(
+                "IMPORT-METER", "SERIAL", EnergyFlowType.ElectricityImport,
+                changeDay.AddDays(-1), changeDay.AddDays(2)));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    private static IEnumerable<OctopusRawReading> DailyIntervals(
+        DateOnly day, EnergyFlowType flow, string point, string serial)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+        var utcStart = TimeZoneInfo.ConvertTimeToUtc(day.ToDateTime(TimeOnly.MinValue), zone);
+        var utcEnd = TimeZoneInfo.ConvertTimeToUtc(day.AddDays(1).ToDateTime(TimeOnly.MinValue), zone);
+        var count = (int)((utcEnd - utcStart).TotalMinutes / 30);
+        for (var index = 0; index < count; index++)
+        {
+            var start = new DateTimeOffset(utcStart.AddMinutes(index * 30), TimeSpan.Zero);
+            yield return new OctopusRawReading(start, start.AddMinutes(30), flow,
+                0.5m, null, point, serial, "", $"{point}-{day:yyyyMMdd}-{index:D2}");
+        }
     }
 
     private sealed class EmptyConsumptionHandler : HttpMessageHandler
