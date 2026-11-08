@@ -62,7 +62,7 @@ public interface IOctopusReadingStore
 {
     Task<DateTimeOffset?> GetLatestOctopusReadingAsync(string meterPoint, string meterSerial, EnergyFlowType flowType, CancellationToken cancellationToken = default);
     Task<DateTimeOffset?> GetEarliestUncostedOctopusReadingAsync(string meterPoint, string meterSerial, EnergyFlowType flowType, CancellationToken cancellationToken = default);
-    Task<DateOnly?> GetEarliestMissingOctopusDayAsync(string meterPoint, string meterSerial, EnergyFlowType flowType, DateOnly from, DateOnly toExclusive, CancellationToken cancellationToken = default);
+    Task<DateOnly?> GetEarliestIncompleteOctopusDayAsync(string meterPoint, string meterSerial, EnergyFlowType flowType, DateOnly from, DateOnly toExclusive, CancellationToken cancellationToken = default);
     Task<int> DeleteReadingsOutsideConfigurationAsync(IReadOnlyCollection<OctopusMeterPoint> meters, CancellationToken cancellationToken = default);
     Task UpsertOctopusRawReadingsAsync(IReadOnlyCollection<OctopusRawReading> readings, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<OctopusRawReading>> InsertMissingOctopusRawReadingsAsync(IReadOnlyCollection<OctopusRawReading> readings, CancellationToken cancellationToken = default);
