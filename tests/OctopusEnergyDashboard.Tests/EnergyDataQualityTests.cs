@@ -40,6 +40,25 @@ public sealed class EnergyDataQualityTests
     }
 
     [Fact]
+    public void MissingDates_ReportsExactDaysButNotDaysOutsideTheGraceWindow()
+    {
+        var window = OctopusReportingCompleteness.RecentExpectedWindow(new DateOnly(2026, 11, 8));
+        var expected = new[] { new DateOnly(2026, 10, 25), new DateOnly(2026, 11, 3) };
+        var observed = Enumerable.Range(0, window.ExpectedDays)
+            .Select(offset => window.From.AddDays(offset))
+            .Where(date => !expected.Contains(date))
+            .Append(new DateOnly(2026, 11, 7)).ToArray();
+
+        var missing = OctopusReportingCompleteness.MissingDates(window, observed);
+
+        Assert.Equal(expected, missing);
+        var warning = OctopusReportingCompleteness.IncompleteWarning(EnergyFlowType.Gas, 28, window, missing);
+        Assert.Contains("25 Oct 2026", warning, StringComparison.Ordinal);
+        Assert.Contains("03 Nov 2026", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("07 Nov 2026", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SameMpanForImportAndExport_IsFlagged()
     {
         var meters = new[] { new OctopusMeterPoint("A", 1, "electricity", false, "SAME", "I", "", "", null, null), new OctopusMeterPoint("A", 1, "electricity", true, "SAME", "E", "", "", null, null) };
