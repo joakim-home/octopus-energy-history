@@ -206,6 +206,38 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         var value = await command.ExecuteScalarAsync(cancellationToken); return value is null or DBNull ? null : DateTimeOffset.Parse((string)value,CultureInfo.InvariantCulture);
     }
 
+    // Look only for recent, wholly absent UTC days. No consumption records are modified.
+    // A meter with no readings in this window uses the existing incremental cursor instead.
+    public async Task<DateOnly?> GetEarliestMissingOctopusDayAsync(
+        string meterPoint, string meterSerial, EnergyFlowType flowType,
+        DateOnly from, DateOnly toExclusive, CancellationToken cancellationToken = default)
+    {
+        if (from >= toExclusive) return null;
+        await using var connection = Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT substr(period_start,1,10)
+            FROM octopus_raw_readings
+            WHERE meter_point=@point AND meter_serial=@serial AND flow_type=@flow
+              AND period_start>=@from AND period_start<@to
+            ORDER BY 1
+            """;
+        command.Parameters.AddWithValue("@point", meterPoint);
+        command.Parameters.AddWithValue("@serial", meterSerial);
+        command.Parameters.AddWithValue("@flow", (int)flowType);
+        command.Parameters.AddWithValue("@from", from.ToString("O"));
+        command.Parameters.AddWithValue("@to", toExclusive.ToString("O"));
+        var observed = new HashSet<DateOnly>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                if (DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var date)) observed.Add(date);
+        if (observed.Count == 0) return null;
+        for (var date = from; date < toExclusive; date = date.AddDays(1))
+            if (!observed.Contains(date)) return date;
+        return null;
+    }
+
     public async Task<int> DeleteReadingsOutsideConfigurationAsync(IReadOnlyCollection<OctopusMeterPoint> meters, CancellationToken cancellationToken = default)
     {
         var deleted=0; await using var connection=Open(); await using var transaction=await connection.BeginTransactionAsync(cancellationToken);
