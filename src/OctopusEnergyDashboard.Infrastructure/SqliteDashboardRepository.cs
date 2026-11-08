@@ -206,6 +206,38 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         var value = await command.ExecuteScalarAsync(cancellationToken); return value is null or DBNull ? null : DateTimeOffset.Parse((string)value,CultureInfo.InvariantCulture);
     }
 
+    // Look only for recent, wholly absent UTC days. No consumption records are modified.
+    // A meter with no readings in this window uses the existing incremental cursor instead.
+    public async Task<DateOnly?> GetEarliestMissingOctopusDayAsync(
+        string meterPoint, string meterSerial, EnergyFlowType flowType,
+        DateOnly from, DateOnly toExclusive, CancellationToken cancellationToken = default)
+    {
+        if (from >= toExclusive) return null;
+        await using var connection = Open();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT substr(period_start,1,10)
+            FROM octopus_raw_readings
+            WHERE meter_point=@point AND meter_serial=@serial AND flow_type=@flow
+              AND period_start>=@from AND period_start<@to
+            ORDER BY 1
+            """;
+        command.Parameters.AddWithValue("@point", meterPoint);
+        command.Parameters.AddWithValue("@serial", meterSerial);
+        command.Parameters.AddWithValue("@flow", (int)flowType);
+        command.Parameters.AddWithValue("@from", from.ToString("O"));
+        command.Parameters.AddWithValue("@to", toExclusive.ToString("O"));
+        var observed = new HashSet<DateOnly>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                if (DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var date)) observed.Add(date);
+        if (observed.Count == 0) return null;
+        for (var date = from; date < toExclusive; date = date.AddDays(1))
+            if (!observed.Contains(date)) return date;
+        return null;
+    }
+
     public async Task<int> DeleteReadingsOutsideConfigurationAsync(IReadOnlyCollection<OctopusMeterPoint> meters, CancellationToken cancellationToken = default)
     {
         var deleted=0; await using var connection=Open(); await using var transaction=await connection.BeginTransactionAsync(cancellationToken);
@@ -565,8 +597,25 @@ public sealed class SqliteDashboardRepository : IDashboardRepository, IOctopusCo
         var completenessWindow = OctopusReportingCompleteness.RecentExpectedWindow(today);
         foreach (var expected in meters.Select(x => x.FuelType == "gas" ? EnergyFlowType.Gas : x.IsExport ? EnergyFlowType.ElectricityExport : EnergyFlowType.ElectricityImport).Distinct())
         {
-            await using var countCommand = connection.CreateCommand(); countCommand.CommandText = "SELECT COUNT(DISTINCT substr(period_start,1,10)) FROM energy_records WHERE source='Octopus' AND flow_type=@flow AND period_start>=@from AND period_start<@to"; countCommand.Parameters.AddWithValue("@flow", (int)expected); countCommand.Parameters.AddWithValue("@from", completenessWindow.From.ToString("O")); countCommand.Parameters.AddWithValue("@to", completenessWindow.ToExclusive.ToString("O"));
-            var count = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken) ?? 0, CultureInfo.InvariantCulture); if (dataFrom is not null && dataFrom.Value.Date <= completenessWindow.From.ToDateTime(TimeOnly.MinValue) && count < completenessWindow.ExpectedDays) warnings.Add(OctopusReportingCompleteness.IncompleteWarning(expected, count, completenessWindow));
+            await using var daysCommand = connection.CreateCommand();
+            daysCommand.CommandText = """
+                SELECT DISTINCT substr(period_start,1,10)
+                FROM energy_records
+                WHERE source='Octopus' AND flow_type=@flow
+                  AND period_start>=@from AND period_start<@to
+                """;
+            daysCommand.Parameters.AddWithValue("@flow", (int)expected);
+            daysCommand.Parameters.AddWithValue("@from", completenessWindow.From.ToString("O"));
+            daysCommand.Parameters.AddWithValue("@to", completenessWindow.ToExclusive.ToString("O"));
+            var recordedDates = new List<DateOnly>();
+            await using (var reader = await daysCommand.ExecuteReaderAsync(cancellationToken))
+                while (await reader.ReadAsync(cancellationToken))
+                    if (DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out var date)) recordedDates.Add(date);
+            var missing = OctopusReportingCompleteness.MissingDates(completenessWindow, recordedDates);
+            if (dataFrom is not null && dataFrom.Value.Date <= completenessWindow.From.ToDateTime(TimeOnly.MinValue) && missing.Count > 0)
+                warnings.Add(OctopusReportingCompleteness.IncompleteWarning(
+                    expected, completenessWindow.ExpectedDays - missing.Count, completenessWindow, missing));
         }
         var todayCost=await Costs(today,today.AddDays(1)); var monthCost=await Costs(month,null); var yearCost=await Costs(year,null); var monthBreakdown=await ImportBreakdown(month); var yearBreakdown=await ImportBreakdown(year);
         if(monthBreakdown.UnknownKwh>0.1m) warnings.Add($"{monthBreakdown.UnknownKwh:N1} kWh of this month's import could not be classified as Intelligent Go peak or off-peak.");

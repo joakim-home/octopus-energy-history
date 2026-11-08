@@ -71,6 +71,9 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
             }
             // Normal ingestion is insert-only. Historical correction/repricing needs a separate approved workflow.
             var imported = 0; var unavailableTariffs=new HashSet<string>(StringComparer.OrdinalIgnoreCase); DateTimeOffset? importedFrom = null; DateTimeOffset? importedTo = null; var standingApplied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var completenessWindow = OctopusReportingCompleteness.RecentExpectedWindow(DateOnly.FromDateTime(DateTime.Now));
+            var historicalGapRetries = new List<string>();
+
             foreach (var meter in meters.DistinctBy(x => new { x.FuelType, x.IsExport, x.MeterPoint, x.MeterSerial, x.TariffCode }))
             {
                 var flow = FlowFor(meter);
@@ -78,6 +81,30 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
                 var periods = PeriodsFor(tariffPeriods, meter);
                 if (periods.Length == 0 && !string.IsNullOrWhiteSpace(meter.TariffCode)) periods = [new(meter.AccountNumber,meter.PropertyId,meter.FuelType,meter.IsExport,meter.MeterPoint,meter.TariffCode,meter.ProductCode,meter.ValidFrom,meter.ValidTo)];
                 var from = latest?.AddDays(-2) ?? new DateTimeOffset(2010, 1, 1, 0, 0, 0, TimeSpan.Zero);
+                // The normal two-day cursor cannot recover older missing days. Revisit only
+                // wholly absent days in the recent reporting window; inserts remain idempotent.
+                var earliestExpected = completenessWindow.From;
+                if (meter.ValidFrom is not null)
+                {
+                    var activationDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+                        meter.ValidFrom.Value, TimeZoneInfo.FindSystemTimeZoneById("Europe/London")).DateTime);
+                    if (activationDate > earliestExpected) earliestExpected = activationDate;
+                }
+                var missingDay = await readingStore.GetEarliestMissingOctopusDayAsync(
+                    meter.MeterPoint, meter.MeterSerial, flow,
+                    earliestExpected, completenessWindow.ToExclusive, cancellationToken);
+                if (missingDay is not null)
+                {
+                    // Include the preceding UTC day for the BST boundary; historical
+                    // consumption is insert-only, so this overlap cannot overwrite readings.
+                    var recoveryFrom = new DateTimeOffset(missingDay.Value.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+                    if (recoveryFrom < from)
+                    {
+                        from = recoveryFrom;
+                        historicalGapRetries.Add($"{flow} {missingDay.Value:dd MMM yyyy}");
+                    }
+                }
+
                 if (!OctopusAgreementCoverage.Spans(periods, latest ?? to, to))
                     pricingWarnings.Add($"Agreement coverage remains incomplete for {meter.FuelType} {(meter.IsExport ? "export" : "import")}.");
                 var rates = new List<OctopusRate>(); var standing = new List<OctopusRate>();
@@ -171,6 +198,7 @@ public sealed class OctopusEnergyDataSource(IDashboardRepository repository, IOc
             var message = imported == 0 ? "No new Octopus readings were available." : $"Imported {imported:N0} raw readings from {meters.Count} meter configuration(s).";
             message += " Existing consumption and historical interval pricing were preserved; historical repricing is disabled.";
             if(unavailableTariffs.Count>0) message += $" Exact rate endpoints were unavailable for {unavailableTariffs.Count} historical tariff(s); their usage remains visible without cost.";
+            if (historicalGapRetries.Count > 0) message += $" Retried recent missing-day backfill: {string.Join(", ", historicalGapRetries)}.";
             if (pricingWarnings.Count > 0) message += " " + string.Join(" ", pricingWarnings);
             return new(Name, true, imported, message, importedFrom, importedTo);
         }

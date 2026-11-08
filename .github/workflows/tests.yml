@@ -1,0 +1,27 @@
+name: Octopus dashboard tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore OctopusEnergyDashboard.sln --configfile NuGet.Config
+      - name: Test
+        run: dotnet test OctopusEnergyDashboard.sln -c Release --no-restore --verbosity normal

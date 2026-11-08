@@ -49,8 +49,17 @@ public static class OctopusReportingCompleteness
         return new(toExclusive.AddDays(-RecentWindowDays), toExclusive);
     }
 
-    public static string IncompleteWarning(EnergyFlowType flow, int availableDays, EnergyCompletenessWindow window)
-        => $"{flow} data incomplete: {availableDays:N0}/{window.ExpectedDays:N0} expected days present after applying the 24-48 hour Octopus reporting grace period ({window.DisplayRange}).";
+    public static IReadOnlyList<DateOnly> MissingDates(EnergyCompletenessWindow window, IEnumerable<DateOnly> recorded)
+    {
+        var present = recorded.ToHashSet();
+        return Enumerable.Range(0, window.ExpectedDays)
+            .Select(offset => window.From.AddDays(offset))
+            .Where(date => !present.Contains(date)).ToArray();
+    }
+
+    public static string IncompleteWarning(EnergyFlowType flow, int availableDays, EnergyCompletenessWindow window, IReadOnlyList<DateOnly>? missingDates = null)
+        => $"{flow} data incomplete: {availableDays:N0}/{window.ExpectedDays:N0} expected days present after applying the 24-48 hour Octopus reporting grace period ({window.DisplayRange})."
+           + (missingDates is { Count: > 0 } ? $" Missing: {string.Join(", ", missingDates.Select(date => date.ToString("dd MMM yyyy")))}." : "");
 }
 
 public static class SolarExportCapability
