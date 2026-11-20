@@ -56,6 +56,20 @@ public sealed class OctopusTariffLifecycleTests
         Assert.Empty(OctopusResponseParser.SelectRatesForPaymentMethod([untagged[0], directDebit], "DIRECT_DEBIT"));
     }
 
+    [Theory]
+    [InlineData("https://api.octopus.energy/v1/products/PRODUCT/electricity-tariffs/TARIFF/standing-charges/", true)]
+    [InlineData("https://api.oegb-kraken.energy/v1/products/PRODUCT/electricity-tariffs/TARIFF/standing-charges/", true)]
+    [InlineData("https://example.com/v1/products/PRODUCT/electricity-tariffs/TARIFF/standing-charges/", false)]
+    [InlineData("http://api.oegb-kraken.energy/v1/products/PRODUCT/electricity-tariffs/TARIFF/standing-charges/", false)]
+    [InlineData("https://api.oegb-kraken.energy:8443/v1/products/PRODUCT/electricity-tariffs/TARIFF/standing-charges/", false)]
+    [InlineData("https://api.oegb-kraken.energy/v1/accounts/ACCOUNT/", false)]
+    public void TariffEndpointsAllowOnlyTrustedApiHosts(string url, bool allowed)
+    {
+        var endpoint = new Uri(url);
+        if (allowed) OctopusTariffMetadata.ValidateEndpoint(endpoint);
+        else Assert.Throws<InvalidOperationException>(() => OctopusTariffMetadata.ValidateEndpoint(endpoint));
+    }
+
     [Fact]
     public void UnknownTariffAndUntrustedEndpointFailClosed()
     {
