@@ -58,7 +58,7 @@ public sealed record OctopusTariffMetadata(OctopusProductSemantics Semantics, IR
 
     public static void ValidateEndpoint(Uri uri)
     {
-        if (uri.Scheme != "https" || uri.Host != "api.octopus.energy" || !uri.IsDefaultPort || !string.IsNullOrEmpty(uri.UserInfo)
+        if (uri.Scheme != "https" || (uri.Host != "api.octopus.energy" && uri.Host != "api.oegb-kraken.energy") || !uri.IsDefaultPort || !string.IsNullOrEmpty(uri.UserInfo)
             || !uri.AbsolutePath.StartsWith("/v1/products/", StringComparison.Ordinal))
             throw new InvalidOperationException("Octopus returned an unexpected tariff endpoint.");
     }
